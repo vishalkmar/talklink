@@ -7,7 +7,7 @@ const { connectTestDeps, resetTestDeps, closeTestDeps } = require('./helpers/db'
 const { createUniqueUser } = require('../src/utils/privateNumber');
 const { signAccessToken } = require('../src/services/token.service');
 const { Call, CreditTransaction, User } = require('../src/models');
-const { redis } = require('../src/config/redis');
+const { store } = require('../src/config/store');
 const g = require('../src/services/gamification.service');
 const ads = require('../src/services/ads.service');
 const callService = require('../src/services/call.service');
@@ -209,7 +209,7 @@ describe('goals (32.7 - 32.10)', () => {
     await chat.sendMessage(me.uid, { toUserId: String(other._id), text: 'hi' });
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(
-      Number(await redis.get(g.keys.counter(me.uid, `d:${istDayKey(clock)}`, 'messages'))),
+      Number(await store.get(g.keys.counter(me.uid, `d:${istDayKey(clock)}`, 'messages'))),
       1,
     );
   });

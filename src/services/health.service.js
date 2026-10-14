@@ -1,4 +1,4 @@
-// Dependency health registry. Connections (Mongo, Redis, ...) register a status
+// Dependency health registry. Connections (Mongo, store, ...) register a status
 // function; GET /health reports them all.
 const config = require('../config');
 

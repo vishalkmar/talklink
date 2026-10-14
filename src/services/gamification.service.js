@@ -6,16 +6,16 @@
 //            (remembering the old value for the streak-saver). best = max ever.
 //  Aura    - call / chat minutes (AURA_PER_MINUTE), 4-5 star ratings received, goal rewards.
 //            Every gain also counts for this week's leaderboard.
-//  Goals   - progress counters in Redis per IST day / ISO week; claim once (credits + aura).
+//  Goals   - progress counters in the store per IST day / ISO week; claim once (credits + aura).
 //
-// Redis:
+// Store:
 //   goal:<uid>:<period>:<metric>     counters (period = d:<day> | w:<week>)
 //   goal:<uid>:<period>:claimed      SET of claimed goal ids
 //   aura:week:<week>                 ZSET user -> aura gained this week
 //   streaksaver:<uid>:<day>          video watched for the streak-saver (from ads.service)
 const mongoose = require('mongoose');
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
@@ -67,7 +67,7 @@ const addAura = async (userIds, amount, reason) => {
   if (!amount || amount <= 0 || !ids.length) return;
   await User.updateMany({ _id: { $in: ids } }, { $inc: { aura: amount } });
   const week = K.week(istWeekKey(settings.now()));
-  const multi = redis.multi();
+  const multi = store.multi();
   ids.forEach((id) => multi.zincrby(week, amount, id));
   multi.expire(week, TTL_WEEK);
   await multi.exec();
@@ -84,7 +84,7 @@ const addAura = async (userIds, amount, reason) => {
 const bump = async (uid, metric, by = 1) => {
   if (!METRICS.includes(metric) || by <= 0) return;
   const { day, week } = periods();
-  await redis
+  await store
     .multi()
     .incrby(K.counter(uid, day, metric), by)
     .expire(K.counter(uid, day, metric), TTL_DAY)
@@ -186,7 +186,7 @@ const saverState = (user, now = settings.now()) => {
 // after the video (ads purpose 'streak' writes the token): yesterday counts again
 // 32.13 a watched 'streak' video -> one saver token for today (IST, same clock as the restore)
 const grantSaverToken = async (uid) => {
-  await redis.set(K.saver(String(uid), istDayKey(settings.now())), '1', 'EX', 2 * 24 * 3600);
+  await store.set(K.saver(String(uid), istDayKey(settings.now())), '1', 'EX', 2 * 24 * 3600);
 };
 
 const useStreakSaver = async (uid) => {
@@ -195,7 +195,7 @@ const useStreakSaver = async (uid) => {
   const user = await User.findById(uid).lean();
   const st = saverState(user, now);
   if (!st.available) throw ApiError.conflict('No streak to save right now', 'NO_STREAK_TO_SAVE');
-  const token = await redis.getdel(K.saver(uid, today));
+  const token = await store.getdel(K.saver(uid, today));
   if (!token) throw new ApiError(402, 'AD_REQUIRED', 'Watch a short video to save your streak');
   const restored = user.streakBeforeReset + (user.lastActiveDay === today ? 1 : 0);
   await User.updateOne(
@@ -219,8 +219,8 @@ const useStreakSaver = async (uid) => {
 
 const goalView = async (uid, defs, period) => {
   const [claimed, ...values] = await Promise.all([
-    redis.smembers(K.claimed(uid, period)),
-    ...defs.map((g) => redis.get(K.counter(uid, period, g.metric))),
+    store.smembers(K.claimed(uid, period)),
+    ...defs.map((g) => store.get(K.counter(uid, period, g.metric))),
   ]);
   return defs.map((g, i) => {
     const progress = Math.min(Number(values[i]) || 0, g.target);
@@ -275,11 +275,11 @@ const claimGoal = async (userId, goalId) => {
   if (!goal) throw ApiError.notFound('Goal not found', 'GOAL_NOT_FOUND');
   const { day, week } = periods();
   const period = daily ? day : week;
-  const progress = Number(await redis.get(K.counter(uid, period, goal.metric))) || 0;
+  const progress = Number(await store.get(K.counter(uid, period, goal.metric))) || 0;
   if (progress < goal.target) throw ApiError.conflict('This goal is not done yet', 'GOAL_NOT_DONE');
   // claim once (SADD returns 1 only for the first claim)
-  const first = await redis.sadd(K.claimed(uid, period), goal.id);
-  await redis.expire(K.claimed(uid, period), daily ? TTL_DAY : TTL_WEEK);
+  const first = await store.sadd(K.claimed(uid, period), goal.id);
+  await store.expire(K.claimed(uid, period), daily ? TTL_DAY : TTL_WEEK);
   if (!first) throw ApiError.conflict('Already claimed', 'GOAL_ALREADY_CLAIMED');
   let balance;
   try {
@@ -295,7 +295,7 @@ const claimGoal = async (userId, goalId) => {
     }
     await addAura(uid, goal.reward.aura, `goal:${goal.id}`);
   } catch (err) {
-    await redis.srem(K.claimed(uid, period), goal.id); // let them try again
+    await store.srem(K.claimed(uid, period), goal.id); // let them try again
     throw err;
   }
   const { aura } = await User.findById(uid).select('aura').lean();
@@ -307,7 +307,7 @@ const claimGoal = async (userId, goalId) => {
 const leaderboard = async (userId, limit = 20) => {
   const week = istWeekKey(settings.now());
   const key = K.week(week);
-  const rows = await redis.zrevrange(key, 0, limit - 1, 'WITHSCORES');
+  const rows = await store.zrevrange(key, 0, limit - 1, 'WITHSCORES');
   const entries = [];
   for (let i = 0; i < rows.length; i += 2) entries.push({ id: rows[i], aura: Number(rows[i + 1]) });
   const users = await User.find({
@@ -316,8 +316,8 @@ const leaderboard = async (userId, limit = 20) => {
   }).lean();
   const byId = new Map(users.map((u) => [String(u._id), u]));
   const [myRank, myScore] = await Promise.all([
-    redis.zrevrank(key, String(userId)),
-    redis.zscore(key, String(userId)),
+    store.zrevrank(key, String(userId)),
+    store.zscore(key, String(userId)),
   ]);
   return {
     week,

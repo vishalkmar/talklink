@@ -1,5 +1,5 @@
 // Small helpers shared by every socket module.
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const logger = require('../utils/logger');
 
 // Per-user event limits (13.13): [max events, window seconds]. Anything not listed uses DEFAULT.
@@ -16,15 +16,15 @@ const RATE_LIMITS = {
 
 const limitFor = (event) => RATE_LIMITS[event] || RATE_LIMITS.DEFAULT;
 
-// socket.use() middleware: counts events per user + event name in Redis (works across devices
+// socket.use() middleware: counts events per user + event name in the store (works across devices
 // and instances). Over the limit the event is dropped and its ack (if any) gets RATE_LIMITED.
 const rateLimitMiddleware = (socket) => async (packet, next) => {
   const [event, ...args] = packet;
   const [max, windowSec] = limitFor(event);
   try {
     const k = `rl:sock:${socket.data.userId}:${event}`;
-    const count = await redis.incr(k);
-    if (count === 1) await redis.expire(k, windowSec);
+    const count = await store.incr(k);
+    if (count === 1) await store.expire(k, windowSec);
     if (count > max) {
       const ack = args[args.length - 1];
       if (typeof ack === 'function') {

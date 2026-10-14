@@ -1,10 +1,8 @@
-// Socket.IO server (Phase 13): authenticated, one room per user, multi-instance via Redis adapter.
+// Socket.IO server (Phase 13): authenticated, one room per user (single instance, ADR-041).
 // Feature modules (presence, match, call, chat) register their handlers in `modules` below.
 const { Server } = require('socket.io');
-const { createAdapter } = require('@socket.io/redis-adapter');
 const config = require('../config');
 const logger = require('../utils/logger');
-const { redis, redisSub } = require('../config/redis');
 const socketAuth = require('./auth');
 const registry = require('./registry');
 const { rateLimitMiddleware } = require('./helpers');
@@ -27,7 +25,7 @@ const modules = [
 
 let io = null;
 
-const initSockets = (httpServer, { useRedisAdapter = true } = {}) => {
+const initSockets = (httpServer) => {
   io = new Server(httpServer, {
     path: '/socket.io',
     cors: {
@@ -42,8 +40,6 @@ const initSockets = (httpServer, { useRedisAdapter = true } = {}) => {
     serveClient: false,
   });
 
-  // 13.2 multi-instance sync; not needed (and not possible) with the in-memory store
-  if (useRedisAdapter && !config.redis.inMemory) io.adapter(createAdapter(redis, redisSub));
   emitter.setIO(io);
 
   io.use(socketAuth);

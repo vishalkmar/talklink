@@ -1,7 +1,7 @@
 // Live audio call sessions (Phase 17): who is in which call, relaying signaling to the right
 // device, connect / end bookkeeping, peer-lost grace and the max-duration safety limit.
 //
-// Redis:
+// Store:
 //   call:<roomId>        HASH { callerId, calleeId, mode, state, createdAt, startedAt,
 //                               callerSock, calleeSock, blockChecked,
 //                               awaitingAnswer ('1' while a direct call rings, Phase 21) }
@@ -10,7 +10,7 @@
 //   user:<uid>:call      STRING roomId   - the call this user is in
 // roomId = the Call document id.
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const Call = require('../models/Call');
 
 const ApiError = require('../utils/ApiError');
@@ -42,7 +42,7 @@ const roleOf = (call, uid) => (call.callerId === uid ? 'caller' : 'callee');
 const peerOf = (call, uid) => (call.callerId === uid ? call.calleeId : call.callerId);
 
 const getCall = async (roomId) => {
-  const h = await redis.hgetall(K.call(roomId));
+  const h = await store.hgetall(K.call(roomId));
   return h && h.callerId ? { roomId, ...h } : null;
 };
 
@@ -61,7 +61,7 @@ const registerCall = async ({ roomId, callerId, calleeId, mode, awaitingAnswer =
   const now = Date.now();
   const fields = { callerId, calleeId, mode, state: 'ringing', createdAt: now };
   if (awaitingAnswer) fields.awaitingAnswer = '1';
-  await redis
+  await store
     .multi()
     .hset(K.call(roomId), fields)
     .expire(K.call(roomId), ttlSec())
@@ -82,7 +82,7 @@ const registerCall = async ({ roomId, callerId, calleeId, mode, awaitingAnswer =
 const bindSocket = async (call, uid, socketId) => {
   const field = `${roleOf(call, uid)}Sock`;
   if (call[field] === socketId) return;
-  if (!call[field]) await redis.hsetnx(K.call(call.roomId), field, socketId);
+  if (!call[field]) await store.hsetnx(K.call(call.roomId), field, socketId);
 };
 
 // Relays an event to the other participant's bound device (or all their devices before binding).
@@ -97,14 +97,14 @@ const relay = (call, fromUid, event, payload) => {
 // Both apps report call:connected when ICE connects; the first report starts the clock.
 const markConnected = async (roomId) => {
   const now = Date.now();
-  const first = await redis.hsetnx(K.call(roomId), 'startedAt', now);
+  const first = await store.hsetnx(K.call(roomId), 'startedAt', now);
   if (first) {
-    await redis.hset(K.call(roomId), 'state', 'active');
+    await store.hset(K.call(roomId), 'state', 'active');
     await Call.updateOne({ _id: roomId }, { $set: { status: 'active', startedAt: new Date(now) } });
     logger.info({ roomId }, 'Call connected');
     return now;
   }
-  return Number(await redis.hget(K.call(roomId), 'startedAt'));
+  return Number(await store.hget(K.call(roomId), 'startedAt'));
 };
 
 const clearTimers = (roomId) => {
@@ -121,7 +121,7 @@ const clearTimers = (roomId) => {
 // Ends a call exactly once (17.8 / 17.15 / 17.16). reason: hangup | peer_lost | max_duration |
 // blocked | declined | cancelled ... Returns the summary, or null if it was already ended.
 const endCall = async (roomId, { reason = 'hangup', endedBy = null } = {}) => {
-  const first = await redis.set(K.ended(roomId), reason, 'EX', 300, 'NX');
+  const first = await store.set(K.ended(roomId), reason, 'EX', 300, 'NX');
   if (!first) return null;
   clearTimers(roomId);
   const call = await getCall(roomId);
@@ -150,11 +150,11 @@ const endCall = async (roomId, { reason = 'hangup', endedBy = null } = {}) => {
     await gamification.addAura([call.callerId, call.calleeId], auraEarned, 'call');
     await gamification.recordConversation([call.callerId, call.calleeId], durationSec);
   }
-  await redis.del(K.call(roomId));
+  await store.del(K.call(roomId));
   await Promise.all(
     [call.callerId, call.calleeId].map(async (uid) => {
       // only clear the pointer if it still points at this call
-      if ((await redis.get(K.userCall(uid))) === roomId) await redis.del(K.userCall(uid));
+      if ((await store.get(K.userCall(uid))) === roomId) await store.del(K.userCall(uid));
       await presence.clearBusy(uid); // back to available (fixes "stuck in_call")
     }),
   );
@@ -172,14 +172,14 @@ const endCall = async (roomId, { reason = 'hangup', endedBy = null } = {}) => {
 
 // 17.9 last device of a participant went away: tell the peer, wait for a reconnect.
 const onUserGone = async (uid) => {
-  const roomId = await redis.get(K.userCall(uid));
+  const roomId = await store.get(K.userCall(uid));
   if (!roomId) return;
   const call = await getCall(roomId);
   if (!call) return;
   // a ringing callee may well be offline (app killed) - the ring timeout handles that
   if (call.awaitingAnswer === '1' && roleOf(call, uid) === 'callee') return;
-  // flag in Redis so a reconnect on any instance knows this user really dropped
-  await redis.hset(K.call(roomId), `${roleOf(call, uid)}Lost`, '1');
+  // flag in the store so a reconnect on any instance knows this user really dropped
+  await store.hset(K.call(roomId), `${roleOf(call, uid)}Lost`, '1');
   emitter.emitToUser(peerOf(call, uid), EVENTS.CALL_PEER_STATUS, {
     roomId,
     status: 'reconnecting',
@@ -204,7 +204,7 @@ const onUserGone = async (uid) => {
 // Only after a real drop: a connection from an extra device while the call device is still
 // online must not steal the call.
 const onUserBack = async (uid) => {
-  const roomId = await redis.get(K.userCall(uid));
+  const roomId = await store.get(K.userCall(uid));
   if (!roomId) return null;
   const call = await getCall(roomId);
   if (!call) return null;
@@ -213,21 +213,21 @@ const onUserBack = async (uid) => {
   const key = `${roomId}:${uid}`;
   clearTimeout(lostTimers.get(key));
   lostTimers.delete(key);
-  await redis.hdel(K.call(roomId), `${role}Sock`, `${role}Lost`);
+  await store.hdel(K.call(roomId), `${role}Sock`, `${role}Lost`);
   emitter.emitToUser(peerOf(call, uid), EVENTS.CALL_PEER_STATUS, { roomId, status: 'connected' });
   return roomId;
 };
 
 // Phase 26.8: blocking someone ends any live call between the two.
 const endCallBetween = async (a, b, reason = 'blocked') => {
-  const roomId = await redis.get(K.userCall(String(a)));
+  const roomId = await store.get(K.userCall(String(a)));
   if (!roomId) return null;
   const call = await getCall(roomId);
   if (!call || peerOf(call, String(a)) !== String(b)) return null;
   return endCall(roomId, { reason, endedBy: String(a) });
 };
 
-const activeCallOf = (uid) => redis.get(K.userCall(uid));
+const activeCallOf = (uid) => store.get(K.userCall(uid));
 
 // 22.6 / 22.7 reserve both users for a new direct call (SET NX), so two calls can't grab the same
 // person at once. Returns 'ok' | 'caller_busy' | 'callee_busy'. registerCall() then overwrites the
@@ -235,9 +235,9 @@ const activeCallOf = (uid) => redis.get(K.userCall(uid));
 const PENDING = 'pending';
 const claimCallSlots = async (callerId, calleeId) => {
   const ttl = 120;
-  if (!(await redis.set(K.userCall(callerId), PENDING, 'EX', ttl, 'NX'))) return 'caller_busy';
-  if (!(await redis.set(K.userCall(calleeId), PENDING, 'EX', ttl, 'NX'))) {
-    await redis.del(K.userCall(callerId));
+  if (!(await store.set(K.userCall(callerId), PENDING, 'EX', ttl, 'NX'))) return 'caller_busy';
+  if (!(await store.set(K.userCall(calleeId), PENDING, 'EX', ttl, 'NX'))) {
+    await store.del(K.userCall(callerId));
     return 'callee_busy';
   }
   return 'ok';
@@ -246,13 +246,13 @@ const claimCallSlots = async (callerId, calleeId) => {
 const releaseCallSlots = async (...uids) => {
   await Promise.all(
     uids.map(async (uid) => {
-      if ((await redis.get(K.userCall(uid))) === PENDING) await redis.del(K.userCall(uid));
+      if ((await store.get(K.userCall(uid))) === PENDING) await store.del(K.userCall(uid));
     }),
   );
 };
 
 // The callee answered: normal call rules (peer-lost etc.) apply from now on.
-const markAnswered = (roomId) => redis.hdel(K.call(roomId), 'awaitingAnswer');
+const markAnswered = (roomId) => store.hdel(K.call(roomId), 'awaitingAnswer');
 
 const onCallEnded = (fn) => {
   endListeners.add(fn);

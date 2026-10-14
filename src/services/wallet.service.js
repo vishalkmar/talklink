@@ -10,7 +10,7 @@
 //  - Too many earn events in 10 minutes flags the account for review (27.16).
 const mongoose = require('mongoose');
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const User = require('../models/User');
 const CreditTransaction = require('../models/CreditTransaction');
 const ApiError = require('../utils/ApiError');
@@ -135,9 +135,9 @@ const getWallet = async (userId) => {
   const [user, adsToday, spinsToday, bonus] = await Promise.all([
     User.findById(userId).select('credits isPremium premiumUntil').lean(),
     // every rewarded ad today (credits + spin ads), counted by ads.service (Phase 28)
-    redis.get(`ad:count:${userId}:${istDayKey()}`).then((n) => Number(n) || 0),
+    store.get(`ad:count:${userId}:${istDayKey()}`).then((n) => Number(n) || 0),
     // spins used today, counted by spin.service (Phase 29)
-    redis.get(`spin:count:${userId}:${istDayKey()}`).then((n) => Number(n) || 0),
+    store.get(`spin:count:${userId}:${istDayKey()}`).then((n) => Number(n) || 0),
     CreditTransaction.exists({ refId: dailyBonusRef(userId) }),
   ]);
   if (!user) throw ApiError.notFound('User not found', 'USER_NOT_FOUND');

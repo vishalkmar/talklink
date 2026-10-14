@@ -9,14 +9,14 @@
 //   in_call      on an audio call            (Phase 17-22)
 //   in_chat      in a random text session    (Phase 25)
 //
-// Redis (14.2 / 14.3 / 14.16):
+// Store (14.2 / 14.3 / 14.16):
 //   presence:<uid>         HASH { state, gender, wants, fg, eligible, lastSeen }   TTL 150 s
 //   online:all             ZSET uid -> last heartbeat ms   (online count)
 //   available:all          ZSET uid -> last heartbeat ms   (random pool, any gender)
 //   available:male|female  ZSET uid -> last heartbeat ms   (gender-filtered pools)
 // Sorted sets scored by heartbeat time: a member that stops heartbeating is "stale" after
 // STALE_MS and is ignored/cleaned, so a crashed server can never leave users stuck as available.
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const User = require('../models/User');
 const logger = require('../utils/logger');
 const registry = require('../sockets/registry');
@@ -80,7 +80,7 @@ const loadUser = (uid) =>
 // ---------- core ----------
 
 const getPresence = async (uid) => {
-  const h = await redis.hgetall(K.presence(uid));
+  const h = await store.hgetall(K.presence(uid));
   if (!h || !h.state)
     return { state: STATE.OFFLINE, lastSeen: h && h.lastSeen ? Number(h.lastSeen) : null };
   return {
@@ -104,7 +104,7 @@ const reconcile = async (uid) => {
   const p = await getPresence(uid);
   if (p.state === STATE.OFFLINE) return p.state;
   const now = Date.now();
-  const multi = redis.multi();
+  const multi = store.multi();
   let state = p.state;
   if (!BUSY.has(p.state)) {
     state = p.wantsAvailable && p.foreground && p.eligible ? STATE.AVAILABLE : STATE.ONLINE_IDLE;
@@ -131,7 +131,7 @@ const onConnect = async (uid) => {
   const user = await loadUser(uid);
   const existing = await getPresence(uid);
   const now = Date.now();
-  await redis
+  await store
     .multi()
     .hset(K.presence(uid), {
       // keep a busy state (e.g. reconnect during a call); otherwise start idle until the app reports
@@ -149,7 +149,7 @@ const onConnect = async (uid) => {
 // 14.5 / 14.6 the app reports its toggle + foreground state.
 const setClientState = async (uid, { available, foreground, autoAccept = false }) => {
   const user = await loadUser(uid);
-  await redis.hset(K.presence(uid), {
+  await store.hset(K.presence(uid), {
     wants: available ? '1' : '0',
     fg: foreground ? '1' : '0',
     auto: autoAccept ? '1' : '0', // 15.17 accept random requests automatically
@@ -162,7 +162,7 @@ const setClientState = async (uid, { available, foreground, autoAccept = false }
 // 14.7 entering a call / search / chat removes the user from the pools.
 const setBusy = async (uid, state) => {
   if (!BUSY.has(state)) throw new Error(`Not a busy state: ${state}`);
-  const multi = redis.multi();
+  const multi = store.multi();
   multi.hset(K.presence(uid), 'state', state);
   removeFromPools(multi, uid);
   multi.expire(K.presence(uid), settings.presenceTtlSec);
@@ -174,7 +174,7 @@ const setBusy = async (uid, state) => {
 const clearBusy = async (uid) => {
   const p = await getPresence(uid);
   if (p.state === STATE.OFFLINE) return p.state;
-  await redis.hset(K.presence(uid), 'state', STATE.ONLINE_IDLE);
+  await store.hset(K.presence(uid), 'state', STATE.ONLINE_IDLE);
   return reconcile(uid);
 };
 
@@ -183,7 +183,7 @@ const touch = async (uid) => {
   const p = await getPresence(uid);
   if (p.state === STATE.OFFLINE) return;
   const now = Date.now();
-  const multi = redis.multi();
+  const multi = store.multi();
   multi.zadd(K.online, now, uid);
   multi.hset(K.presence(uid), 'lastSeen', now);
   multi.expire(K.presence(uid), settings.presenceTtlSec);
@@ -196,7 +196,7 @@ const touch = async (uid) => {
 
 const markOffline = async (uid) => {
   const now = Date.now();
-  const multi = redis.multi();
+  const multi = store.multi();
   removeFromPools(multi, uid);
   multi.zrem(K.online, uid);
   multi.hset(K.presence(uid), { state: STATE.OFFLINE, lastSeen: now });
@@ -223,11 +223,11 @@ const onDisconnect = (uid, remainingSockets) => {
 };
 
 // 14.10 people online right now (fresh heartbeat).
-const onlineCount = () => redis.zcount(K.online, Date.now() - settings.staleMs, '+inf');
+const onlineCount = () => store.zcount(K.online, Date.now() - settings.staleMs, '+inf');
 
 // Fresh members of a random pool (Phase 15). pool: 'all' | 'male' | 'female'.
 const availableUserIds = (pool = 'all') =>
-  redis.zrangebyscore(
+  store.zrangebyscore(
     pool === 'all' ? K.available : K.availableGender(pool),
     Date.now() - settings.staleMs,
     '+inf',
@@ -240,7 +240,7 @@ const isAvailable = async (uid) => (await getPresence(uid)).state === STATE.AVAI
 const cleanupStale = async () => {
   const cutoff = Date.now() - settings.staleMs;
   const keys = [K.online, K.available, ...GENDER_POOLS.map(K.availableGender)];
-  const removed = await Promise.all(keys.map((k) => redis.zremrangebyscore(k, '-inf', cutoff)));
+  const removed = await Promise.all(keys.map((k) => store.zremrangebyscore(k, '-inf', cutoff)));
   return removed.reduce((a, b) => a + b, 0);
 };
 
@@ -248,10 +248,10 @@ const cleanupStale = async () => {
 const debugCounts = async () => {
   const fresh = Date.now() - settings.staleMs;
   const [online, available, male, female] = await Promise.all([
-    redis.zcount(K.online, fresh, '+inf'),
-    redis.zcount(K.available, fresh, '+inf'),
-    redis.zcount(K.availableGender('male'), fresh, '+inf'),
-    redis.zcount(K.availableGender('female'), fresh, '+inf'),
+    store.zcount(K.online, fresh, '+inf'),
+    store.zcount(K.available, fresh, '+inf'),
+    store.zcount(K.availableGender('male'), fresh, '+inf'),
+    store.zcount(K.availableGender('female'), fresh, '+inf'),
   ]);
   return { online, available, availableByGender: { male, female }, staleAfterMs: settings.staleMs };
 };

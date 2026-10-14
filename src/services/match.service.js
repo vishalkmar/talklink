@@ -4,7 +4,7 @@
 //    -> waves: every waveIntervalMs, offer the request to up to waveSize fresh available users
 //       (never: self, blocked either way, matched together in the last 10 min, already offered,
 //       declined, or users already looking at another offer)
-//  acceptMatch()   first candidate to win the Redis lock gets the match -> match:found to both,
+//  acceptMatch()   first candidate to win the store lock gets the match -> match:found to both,
 //                  match:cancelled to everyone else, Call document created, both marked busy
 //  declineMatch()  candidate says no (request keeps going)
 //  cancelMatch()   caller gives up -> candidates' popups close
@@ -13,10 +13,10 @@
 // ONE lock (`match:<id>:lock`, SET NX) decides the outcome - accept, timeout and cancel all race
 // for it, so exactly one of them wins even across server instances.
 //
-// Redis: match:<id> (hash), match:<id>:notified (set), match:<id>:declined (set),
+// Store: match:<id> (hash), match:<id>:notified (set), match:<id>:declined (set),
 //        match:<id>:lock, match:active:<callerId>, offer:<uid>, recent:<uid> (zset)
 const crypto = require('crypto');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const User = require('../models/User');
 const { blockedIdsOf } = require('./block.service');
 const Call = require('../models/Call');
@@ -74,10 +74,10 @@ const publicInfo = (u) => {
 // Everyone the caller must never be matched with: blocks both ways + recent partners.
 const excludedFor = async (uid) => {
   const [blocked, recent] = await Promise.all([
-    blockedIdsOf(uid), // 26.10 both directions, Redis-cached
+    blockedIdsOf(uid), // 26.10 both directions, cached
     (async () => {
-      await redis.zremrangebyscore(K.recent(uid), '-inf', Date.now() - settings.recentPairMs);
-      return redis.zrange(K.recent(uid), 0, -1);
+      await store.zremrangebyscore(K.recent(uid), '-inf', Date.now() - settings.recentPairMs);
+      return store.zrange(K.recent(uid), 0, -1);
     })(),
   ]);
   const set = new Set(recent);
@@ -97,23 +97,23 @@ const stopTimers = (id) => {
 // Releases offers that still point at this request (so those users can get new requests).
 const releaseOffers = async (id, uids) => {
   if (!uids.length) return;
-  const current = await redis.mget(uids.map(K.offer));
+  const current = await store.mget(uids.map(K.offer));
   const mine = uids.filter((u, i) => current[i] === id);
-  if (mine.length) await redis.del(...mine.map(K.offer));
+  if (mine.length) await store.del(...mine.map(K.offer));
 };
 
 // ---------- waves ----------
 
 const runWave = async (id) => {
-  const req = await redis.hgetall(K.req(id));
+  const req = await store.hgetall(K.req(id));
   if (!req.callerId || req.status !== 'pending') return stopTimers(id);
 
   const entry = local.get(id);
   const excluded = entry ? entry.excluded : await excludedFor(req.callerId);
   const [pool, notified, declined] = await Promise.all([
     presence.availableUserIds(req.filter === 'anyone' ? 'all' : req.filter),
-    redis.smembers(K.notified(id)),
-    redis.smembers(K.declined(id)),
+    store.smembers(K.notified(id)),
+    store.smembers(K.declined(id)),
   ]);
   const skip = new Set([...excluded, ...notified, ...declined]);
   const offerable = shuffle(pool.filter((uid) => !skip.has(uid)));
@@ -123,12 +123,12 @@ const runWave = async (id) => {
     if (chosen.length >= (req.premium === '1' ? settings.waveSize * 2 : settings.waveSize)) break;
     // one popup at a time per candidate
 
-    const ok = await redis.set(K.offer(uid), id, 'EX', settings.offerTtlSec, 'NX');
+    const ok = await store.set(K.offer(uid), id, 'EX', settings.offerTtlSec, 'NX');
     if (ok) chosen.push(uid);
   }
   if (!chosen.length) return undefined;
 
-  await redis
+  await store
     .multi()
     .sadd(K.notified(id), ...chosen)
     .expire(K.notified(id), ttlSec())
@@ -155,15 +155,15 @@ const runWave = async (id) => {
 
 // Timeout or cancel. Returns false if an accept (or another close) already won the lock.
 const closeUnmatched = async (id, status) => {
-  const won = await redis.set(K.lock(id), `closed:${status}`, 'EX', settings.lockTtlSec, 'NX');
+  const won = await store.set(K.lock(id), `closed:${status}`, 'EX', settings.lockTtlSec, 'NX');
   if (!won) return false;
   stopTimers(id);
-  const req = await redis.hgetall(K.req(id));
+  const req = await store.hgetall(K.req(id));
   if (!req.callerId) return false;
-  await redis.hset(K.req(id), 'status', status);
-  const notified = await redis.smembers(K.notified(id));
+  await store.hset(K.req(id), 'status', status);
+  const notified = await store.smembers(K.notified(id));
   await Promise.all([
-    redis.del(K.active(req.callerId)),
+    store.del(K.active(req.callerId)),
     releaseOffers(id, notified),
     presence.clearBusy(req.callerId),
   ]);
@@ -213,9 +213,9 @@ const requestMatch = async (callerId, { mode, connectWith }) => {
 
   // 15.16 only one pending request per user
   const requestId = crypto.randomUUID();
-  const claimed = await redis.set(K.active(callerId), requestId, 'EX', ttlSec(), 'NX');
+  const claimed = await store.set(K.active(callerId), requestId, 'EX', ttlSec(), 'NX');
   if (!claimed) {
-    const existing = await redis.get(K.active(callerId));
+    const existing = await store.get(K.active(callerId));
     throw new ApiError(409, 'ALREADY_SEARCHING', 'You are already looking for someone', {
       requestId: existing,
     });
@@ -223,7 +223,7 @@ const requestMatch = async (callerId, { mode, connectWith }) => {
 
   const createdAt = Date.now();
   const expiresAt = createdAt + settings.timeoutMs;
-  await redis
+  await store
     .multi()
     .hset(K.req(requestId), {
       callerId,
@@ -256,11 +256,11 @@ const requestMatch = async (callerId, { mode, connectWith }) => {
 };
 
 const acceptMatch = async (uid, requestId) => {
-  const req = await redis.hgetall(K.req(requestId));
+  const req = await store.hgetall(K.req(requestId));
   if (!req.callerId) throw ApiError.notFound('This request has ended', 'REQUEST_NOT_FOUND');
   if (req.callerId === uid)
     throw ApiError.badRequest('You cannot accept your own request', 'INVALID');
-  if (!(await redis.sismember(K.notified(requestId), uid))) {
+  if (!(await store.sismember(K.notified(requestId), uid))) {
     throw ApiError.forbidden('This request was not offered to you', 'NOT_INVITED');
   }
   if (req.status !== 'pending') throw ApiError.conflict('Someone else picked it up', 'TAKEN');
@@ -269,9 +269,9 @@ const acceptMatch = async (uid, requestId) => {
   }
 
   // 15.8 first accept wins
-  const won = await redis.set(K.lock(requestId), uid, 'EX', settings.lockTtlSec, 'NX');
+  const won = await store.set(K.lock(requestId), uid, 'EX', settings.lockTtlSec, 'NX');
   if (!won) {
-    const holder = await redis.get(K.lock(requestId));
+    const holder = await store.get(K.lock(requestId));
     if (holder && holder.startsWith('closed:')) {
       throw ApiError.conflict('This request has ended', 'REQUEST_CLOSED');
     }
@@ -280,7 +280,7 @@ const acceptMatch = async (uid, requestId) => {
 
   // 15.9 winner
   stopTimers(requestId);
-  await redis.hset(K.req(requestId), { status: 'matched', calleeId: uid });
+  await store.hset(K.req(requestId), { status: 'matched', calleeId: uid });
   const busy = req.mode === 'audio' ? presence.STATE.IN_CALL : presence.STATE.IN_CHAT;
   const [accepter] = await Promise.all([
     User.findById(uid).lean(),
@@ -317,16 +317,16 @@ const acceptMatch = async (uid, requestId) => {
   }
 
   const now = Date.now();
-  const notified = await redis.smembers(K.notified(requestId));
+  const notified = await store.smembers(K.notified(requestId));
   await Promise.all([
     // 15.15 don't pair these two again for a while
-    redis
+    store
       .multi()
       .zadd(K.recent(req.callerId), now, uid)
       .expire(K.recent(req.callerId), 3600)
       .exec(),
-    redis.multi().zadd(K.recent(uid), now, req.callerId).expire(K.recent(uid), 3600).exec(),
-    redis.del(K.active(req.callerId)),
+    store.multi().zadd(K.recent(uid), now, req.callerId).expire(K.recent(uid), 3600).exec(),
+    store.del(K.active(req.callerId)),
     releaseOffers(requestId, notified),
   ]);
 
@@ -359,8 +359,8 @@ const acceptMatch = async (uid, requestId) => {
 
 // 15.11 a candidate says no - recorded so they are not offered it again.
 const declineMatch = async (uid, requestId) => {
-  if (!(await redis.sismember(K.notified(requestId), uid))) return { declined: false };
-  await redis
+  if (!(await store.sismember(K.notified(requestId), uid))) return { declined: false };
+  await store
     .multi()
     .sadd(K.declined(requestId), uid)
     .expire(K.declined(requestId), ttlSec())
@@ -371,7 +371,7 @@ const declineMatch = async (uid, requestId) => {
 
 // 15.13 caller gives up.
 const cancelMatch = async (uid, requestId) => {
-  const req = await redis.hgetall(K.req(requestId));
+  const req = await store.hgetall(K.req(requestId));
   if (!req.callerId) return { cancelled: false };
   if (req.callerId !== uid) throw ApiError.forbidden('Not your request', 'FORBIDDEN');
   return { cancelled: await closeUnmatched(requestId, 'cancelled') };
@@ -379,7 +379,7 @@ const cancelMatch = async (uid, requestId) => {
 
 // Caller's last device went away while searching -> nobody to connect to.
 const onUserGone = async (uid) => {
-  const requestId = await redis.get(K.active(uid));
+  const requestId = await store.get(K.active(uid));
   if (requestId) await closeUnmatched(requestId, 'cancelled');
 };
 

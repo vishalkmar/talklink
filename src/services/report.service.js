@@ -6,7 +6,7 @@ const Report = require('../models/Report');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const {
   REPORTS_PER_DAY,
   AUTO_FLAG_REPORTS,
@@ -23,8 +23,8 @@ const DAY_MS = 24 * 3600 * 1000;
 
 const checkReporterLimit = async (reporterId) => {
   const key = `rl:reports:${reporterId}`;
-  const n = await redis.incr(key);
-  if (n === 1) await redis.expire(key, 24 * 3600);
+  const n = await store.incr(key);
+  if (n === 1) await store.expire(key, 24 * 3600);
   if (n > settings.perDay) {
     throw ApiError.tooMany('You have sent many reports today. Try again tomorrow.', 'RATE_LIMITED');
   }

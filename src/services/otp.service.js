@@ -1,7 +1,7 @@
 // Email OTP: generate, store (hash only), rate-limit, verify with attempt lockout.
 const crypto = require('crypto');
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const Otp = require('../models/Otp');
 const ApiError = require('../utils/ApiError');
 const mailService = require('./mail.service');
@@ -38,7 +38,7 @@ const safeEqual = (a, b) => {
 const generateOtp = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 
 const assertNotLocked = async (email) => {
-  const ttl = await redis.ttl(keys.lock(email));
+  const ttl = await store.ttl(keys.lock(email));
   if (ttl > 0) {
     throw ApiError.tooMany('Too many wrong codes. Try again later.', 'OTP_LOCKED', {
       retryAfterSec: ttl,
@@ -50,18 +50,18 @@ const sendOtp = async (to, { purpose = 'login' } = {}) => {
   const email = keyFor(to, purpose);
   await assertNotLocked(email);
 
-  const cooldownSet = await redis.set(keys.cooldown(email), '1', 'EX', RESEND_COOLDOWN_SEC, 'NX');
+  const cooldownSet = await store.set(keys.cooldown(email), '1', 'EX', RESEND_COOLDOWN_SEC, 'NX');
   if (!cooldownSet) {
-    const ttl = await redis.ttl(keys.cooldown(email));
+    const ttl = await store.ttl(keys.cooldown(email));
     throw ApiError.tooMany('Please wait before requesting a new code', 'OTP_COOLDOWN', {
       retryAfterSec: Math.max(ttl, 1),
     });
   }
 
-  const sentThisHour = await redis.incr(keys.hourly(email));
-  if (sentThisHour === 1) await redis.expire(keys.hourly(email), 3600);
+  const sentThisHour = await store.incr(keys.hourly(email));
+  if (sentThisHour === 1) await store.expire(keys.hourly(email), 3600);
   if (sentThisHour > HOURLY_LIMIT) {
-    const ttl = await redis.ttl(keys.hourly(email));
+    const ttl = await store.ttl(keys.hourly(email));
     throw ApiError.tooMany('Too many codes requested. Try again later.', 'OTP_HOURLY_LIMIT', {
       retryAfterSec: Math.max(ttl, 1),
     });
@@ -86,8 +86,8 @@ const sendOtp = async (to, { purpose = 'login' } = {}) => {
     // Email didn't go out: don't charge the user's cooldown/hourly quota for it.
     await Promise.all([
       Otp.deleteOne({ email }),
-      redis.del(keys.cooldown(email)),
-      redis.decr(keys.hourly(email)),
+      store.del(keys.cooldown(email)),
+      store.decr(keys.hourly(email)),
     ]);
     throw err;
   }
@@ -118,7 +118,7 @@ const verifyOtp = async (to, otp, { purpose = 'login' } = {}) => {
     const attempts = updated ? updated.attempts : config.otp.maxAttempts;
     if (attempts >= config.otp.maxAttempts) {
       await Promise.all([
-        redis.set(keys.lock(email), '1', 'EX', LOCK_SEC),
+        store.set(keys.lock(email), '1', 'EX', LOCK_SEC),
         Otp.deleteOne({ _id: record._id }),
       ]);
       throw ApiError.tooMany('Too many wrong codes. Try again later.', 'OTP_LOCKED', {

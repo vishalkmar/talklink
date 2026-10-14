@@ -2,7 +2,7 @@
 // let one of their devices answer, and turn unanswered calls into missed calls.
 // Phase 22's POST /calls/direct creates the Call document and calls startRinging().
 //
-// Redis:
+// Store:
 //   ring:<roomId>       HASH { callerId, calleeId, mode, caller (JSON), expiresAt }  TTL ring + 60 s
 //   ring:<roomId>:done  STRING (SET NX) accepted | declined | missed | cancelled - one outcome wins
 //
@@ -14,7 +14,7 @@
 // Whenever ringing stops, every callee device gets call:ring-stopped and the push device gets
 // call_cancelled (removes the full-screen notification); missed calls also get missed_call.
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
@@ -47,7 +47,7 @@ const callerInfo = (u) => {
 };
 
 const getRing = async (roomId) => {
-  const r = await redis.hgetall(K.ring(roomId));
+  const r = await store.hgetall(K.ring(roomId));
   if (!r || !r.calleeId) return null;
   return { ...r, roomId, expiresAt: Number(r.expiresAt), caller: JSON.parse(r.caller || '{}') };
 };
@@ -66,12 +66,12 @@ const clearTimer = (roomId) => {
 
 // Claims the single outcome of this ring. false = something else already happened.
 const claim = async (roomId, outcome) =>
-  Boolean(await redis.set(K.done(roomId), outcome, 'EX', 600, 'NX'));
+  Boolean(await store.set(K.done(roomId), outcome, 'EX', 600, 'NX'));
 
 // Stop the ringing on all callee devices (socket) and on the push device.
 const stopRinging = async (ring, reason) => {
   clearTimer(ring.roomId);
-  await redis.del(K.ring(ring.roomId));
+  await store.del(K.ring(ring.roomId));
   emitter.emitToUser(ring.calleeId, EVENTS.CALL_RING_STOPPED, { roomId: ring.roomId, reason });
   await push.sendToUser(ring.calleeId, push.PUSH.CALL_CANCELLED, { roomId: ring.roomId, reason });
 };
@@ -88,7 +88,7 @@ const startRinging = async ({ roomId, caller, calleeId, mode = 'audio' }) => {
     mode,
     awaitingAnswer: true,
   });
-  await redis
+  await store
     .multi()
     .hset(K.ring(roomId), {
       callerId,
@@ -159,7 +159,7 @@ const acceptCall = async (roomId, uid, socketId) => {
     throw ApiError.notFound('This call has ended', 'CALL_NOT_RINGING'); // caller hung up just now
   }
   await callSession.markAnswered(roomId);
-  if (socketId) await redis.hsetnx(callSession.keys.call(roomId), 'calleeSock', socketId);
+  if (socketId) await store.hsetnx(callSession.keys.call(roomId), 'calleeSock', socketId);
   await presence.setBusy(String(uid), presence.STATE.IN_CALL);
 
   const callee = await User.findById(uid).lean();

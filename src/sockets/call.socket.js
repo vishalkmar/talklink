@@ -6,7 +6,7 @@ const EVENTS = require('../constants/socketEvents.json');
 const callSession = require('../services/callSession.service');
 const ringing = require('../services/ringing.service');
 const { isBlockedEitherWay } = require('../services/block.service');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const ApiError = require('../utils/ApiError');
 const { withAck } = require('./helpers');
 
@@ -54,7 +54,7 @@ module.exports = (io, socket) => {
       await callSession.endCall(call.roomId, { reason: 'blocked', endedBy: uid });
       throw ApiError.forbidden('This call is not allowed', 'CALL_NOT_ALLOWED');
     }
-    await redis.hset(callSession.keys.call(call.roomId), 'blockChecked', '1');
+    await store.hset(callSession.keys.call(call.roomId), 'blockChecked', '1');
   };
 
   const relaySdp = (event) =>

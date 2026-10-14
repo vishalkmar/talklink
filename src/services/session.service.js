@@ -1,7 +1,7 @@
 // Random text sessions (Phase 25): a text match opens a temporary chat with a stranger.
 //
 // Lifecycle (docs/DECISIONS.md ADR-030):
-//   match:found (mode text) -> createSession(): Conversation { isRandomSession: true } + Redis state
+//   match:found (mode text) -> createSession(): Conversation { isRandomSession: true } + store state
 //   messages go through chat.service like any chat; each message resets the idle timer
 //   end:   session:end / session:next / 5 min without messages / last device gone > 60 s / block
 //          -> "Stranger left the chat" system message, input closed, Call (mode text) gets the
@@ -9,12 +9,12 @@
 //   save:  both press "Add to chats" -> the session becomes a permanent chat (or merges into the
 //          one they already have) and is never deleted
 //
-// Redis:
+// Store:
 //   session:<convId>        HASH { callId, a, b, startedAt, connectWithA, addA, addB }
 //   session:<convId>:ended  STRING (SET NX) - ends exactly once, on any instance
 //   user:<uid>:session      STRING convId
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const Call = require('../models/Call');
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
@@ -53,7 +53,7 @@ const END_TEXT = {
 };
 
 const getSession = async (convId) => {
-  const h = await redis.hgetall(K.session(convId));
+  const h = await store.hgetall(K.session(convId));
   return h && h.a ? { ...h, convId } : null;
 };
 
@@ -91,7 +91,7 @@ const createSession = async ({ callId, callerId, calleeId, connectWith = 'anyone
   });
   const convId = String(conv._id);
   await Call.updateOne({ _id: callId }, { $set: { conversationId: conv._id } });
-  await redis
+  await store
     .multi()
     .hset(K.session(convId), {
       callId: String(callId),
@@ -127,10 +127,10 @@ const checkSafety = (conv, text) => {
 const cleanupKeys = async (s) => {
   clearTimeout(idleTimers.get(s.convId));
   idleTimers.delete(s.convId);
-  await redis.del(K.session(s.convId));
+  await store.del(K.session(s.convId));
   await Promise.all(
     [s.a, s.b].map(async (uid) => {
-      if ((await redis.get(K.user(uid))) === s.convId) await redis.del(K.user(uid));
+      if ((await store.get(K.user(uid))) === s.convId) await store.del(K.user(uid));
     }),
   );
 };
@@ -156,7 +156,7 @@ const finishCall = async (s, reason) => {
 // 25.5 / 25.6 ends once; returns the summary or null if it had already ended
 const endSession = async (convId, { reason = 'ended', endedBy = null } = {}) => {
   const id = String(convId);
-  if (!(await redis.set(K.ended(id), reason, 'EX', 600, 'NX'))) return null;
+  if (!(await store.set(K.ended(id), reason, 'EX', 600, 'NX'))) return null;
   const s = await getSession(id);
   if (!s) return null;
   await cleanupKeys(s);
@@ -186,7 +186,7 @@ const endSession = async (convId, { reason = 'ended', endedBy = null } = {}) => 
 // 25.4 end and look for the next stranger straight away
 const nextSession = async (uid, convId) => {
   // 25.18 a double tap must not start two searches / end twice
-  if (!(await redis.set(`session:next:${uid}`, '1', 'PX', 3000, 'NX'))) {
+  if (!(await store.set(`session:next:${uid}`, '1', 'PX', 3000, 'NX'))) {
     throw ApiError.conflict('Already looking for the next person', 'ALREADY_SEARCHING');
   }
   const s = await assertMember(convId, uid);
@@ -238,14 +238,14 @@ const convert = async (s) => {
 const requestAdd = async (uid, convId) => {
   const s = await assertMember(convId, uid);
   const role = roleOf(s, uid);
-  await redis.hset(K.session(s.convId), `add${role}`, '1');
+  await store.hset(K.session(s.convId), `add${role}`, '1');
   const other = role === 'A' ? s.addB : s.addA;
   if (!other) {
     emitter.emitToUser(peerOf(s, uid), EVENTS.SESSION_ADD_REQUEST, { conversationId: s.convId });
     return { added: false, waiting: true };
   }
   // both agreed: this wins the end guard so no "stranger left" ending can run in between
-  if (!(await redis.set(K.ended(s.convId), 'saved', 'EX', 600, 'NX'))) {
+  if (!(await store.set(K.ended(s.convId), 'saved', 'EX', 600, 'NX'))) {
     throw ApiError.conflict('This chat has ended', 'SESSION_NOT_FOUND');
   }
   await cleanupKeys(s);
@@ -264,7 +264,7 @@ const requestAdd = async (uid, convId) => {
 
 // 25.14 last device gone (killed / no network): 60 s to come back
 const onUserGone = async (uid) => {
-  const convId = await redis.get(K.user(uid));
+  const convId = await store.get(K.user(uid));
   if (!convId) return;
   clearTimeout(goneTimers.get(uid));
   const t = setTimeout(async () => {
@@ -287,14 +287,14 @@ const onUserBack = (uid) => {
 
 // 25.11 block in a session ends it
 const endSessionBetween = async (a, b) => {
-  const convId = await redis.get(K.user(String(a)));
+  const convId = await store.get(K.user(String(a)));
   if (!convId) return null;
   const s = await getSession(convId);
   if (!s || peerOf(s, String(a)) !== String(b)) return null;
   return endSession(convId, { reason: 'blocked', endedBy: String(a) });
 };
 
-const activeSessionOf = (uid) => redis.get(K.user(String(uid)));
+const activeSessionOf = (uid) => store.get(K.user(String(uid)));
 
 const __resetForTests = () => {
   idleTimers.forEach((t) => clearTimeout(t));

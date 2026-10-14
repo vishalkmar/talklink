@@ -1,8 +1,8 @@
-// In-memory stand-in for Redis (used when REDIS_URL is empty - one server instance, no Redis
-// service to pay for). Implements exactly the ioredis commands this backend uses, with the same
-// return shapes (strings for values / scores, numbers for counters, 'OK' / null for SET), key
-// expiry (EX / PX / EXPIRE) and MULTI ... EXEC. Data lives in this process only: a restart clears
-// presence, counters and locks (users, credits, chats are in MongoDB and are not affected).
+// In-memory key/value store for short-lived state: presence, matching locks, OTP limits, daily
+// counters, the weekly aura board, caches (ADR-041 - the project uses no Redis). Redis-style
+// commands (SET EX/PX/NX, GETDEL, INCR, EXPIRE/TTL, hashes, sets, sorted sets, MULTI ... EXEC)
+// with key expiry; expired keys are swept every minute. Data lives in this process only: run ONE
+// server instance; a restart clears this state (users, credits, chats live in MongoDB).
 const { EventEmitter } = require('events');
 
 const SWEEP_MS = 60 * 1000;
@@ -27,7 +27,7 @@ const sliceRange = (arr, start, stop) => {
   return arr.slice(s, Math.min(e, n - 1) + 1);
 };
 
-class MemoryRedis extends EventEmitter {
+class MemoryStore extends EventEmitter {
   constructor(store) {
     super();
     // shared between duplicates, like two connections to one server
@@ -51,7 +51,11 @@ class MemoryRedis extends EventEmitter {
   }
 
   duplicate() {
-    return new MemoryRedis(this.store);
+    return new MemoryStore(this.store);
+  }
+
+  disconnect() {
+    this.status = 'end';
   }
 
   // ---------- internals ----------
@@ -444,4 +448,4 @@ class MemoryRedis extends EventEmitter {
   }
 }
 
-module.exports = { MemoryRedis };
+module.exports = { MemoryStore };

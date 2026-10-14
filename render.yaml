@@ -1,5 +1,5 @@
 # Render Blueprint for the TalkLink API. In Render: New -> Blueprint -> pick this repo.
-# It creates the web service (no Redis - the server keeps that state in memory). Values marked `sync: false` are
+# It creates the web service (no Redis - short-lived state is kept in memory). Values marked `sync: false` are
 # asked for in the Render dashboard (fill them now or later - the server starts without them and
 # logs which features are off). Full list: .env.example.
 services:

@@ -1,6 +1,6 @@
 // Rewarded ads (Phase 28). The app never decides a reward on its own in production:
 //
-//  1. app: POST /ads/nonce { purpose } -> nonce (Redis, 1 h, tied to the user + purpose)
+//  1. app: POST /ads/nonce { purpose } -> nonce (store, 1 h, tied to the user + purpose)
 //  2. app shows the ad with serverSideVerificationOptions { userId, customData: nonce }
 //  3. Google calls GET /ads/ssv?...&signature=&key_id= (server-side verification, SSV)
 //  4. server checks Google's ECDSA signature, the nonce, the ad unit and the daily limit, then
@@ -11,7 +11,7 @@
 // purpose: 'credits' -> AD_REWARD_CREDITS; 'spin' -> one extra spin today (Phase 29).
 const crypto = require('crypto');
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
 const { istDayKey } = require('../utils/istDay');
@@ -48,12 +48,12 @@ const createNonce = async (userId, purpose = 'credits', device = {}) => {
     logger.warn({ userId: String(userId) }, 'Ad reward refused on an emulator');
     throw ApiError.forbidden('Rewards are not available on this device', 'REWARDS_UNAVAILABLE');
   }
-  const used = Number(await redis.get(K.today(String(userId)))) || 0;
+  const used = Number(await store.get(K.today(String(userId)))) || 0;
   if (used >= settings.dailyLimit) {
     throw new ApiError(429, 'DAILY_LIMIT', 'You have watched all videos for today');
   }
   const nonce = crypto.randomBytes(16).toString('hex');
-  await redis.set(
+  await store.set(
     K.nonce(nonce),
     JSON.stringify({ uid: String(userId), purpose }),
     'EX',
@@ -106,15 +106,15 @@ const verifySignature = async (rawQuery) => {
 // ---------- granting ----------
 
 const grant = async ({ userId, nonce, transactionId, adUnit, source }) => {
-  const raw = await redis.getdel(K.nonce(nonce));
+  const raw = await store.getdel(K.nonce(nonce));
   if (!raw) return { granted: false, reason: 'NONCE_INVALID' };
   const { uid, purpose } = JSON.parse(raw);
   if (uid !== String(userId)) return { granted: false, reason: 'NONCE_INVALID' };
 
   // 28.13 daily limit (counts every rewarded ad, both purposes)
   const countKey = K.today(uid);
-  const n = await redis.incr(countKey);
-  if (n === 1) await redis.expire(countKey, 2 * 24 * 3600);
+  const n = await store.incr(countKey);
+  if (n === 1) await store.expire(countKey, 2 * 24 * 3600);
   if (n > settings.dailyLimit) return { granted: false, reason: 'DAILY_LIMIT' };
 
   if (purpose === 'streak') {
@@ -125,7 +125,7 @@ const grant = async ({ userId, nonce, transactionId, adUnit, source }) => {
   }
   if (purpose === 'spin') {
     const key = K.extraSpins(uid);
-    await redis
+    await store
       .multi()
       .incr(key)
       .expire(key, 2 * 24 * 3600)
@@ -184,7 +184,7 @@ const claim = async (userId, { nonce }) => {
 };
 
 const extraSpinsToday = async (userId) =>
-  Number(await redis.get(K.extraSpins(String(userId)))) || 0;
+  Number(await store.get(K.extraSpins(String(userId)))) || 0;
 
 // tests
 const __setKeyFetcherForTests = (fn) => {

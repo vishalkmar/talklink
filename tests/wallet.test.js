@@ -10,7 +10,7 @@ const { connectTestDeps, resetTestDeps, closeTestDeps } = require('./helpers/db'
 const { createUniqueUser } = require('../src/utils/privateNumber');
 const { signAccessToken } = require('../src/services/token.service');
 const { CreditTransaction, User } = require('../src/models');
-const { redis } = require('../src/config/redis');
+const { store } = require('../src/config/store');
 const sockets = require('../src/sockets');
 const presence = require('../src/services/presence.service');
 const wallet = require('../src/services/wallet.service');
@@ -167,7 +167,7 @@ describe('wallet APIs (27.6, 27.7, 27.14)', () => {
   it('GET /wallet shows balance and today limits', async () => {
     await wallet.credit({ userId: me.uid, amount: 500, type: 'ad_reward', refId: 'ad-1' });
     // rewarded ads are counted by ads.service (Phase 28)
-    await redis.set(`ad:count:${me.uid}:${istDayKey()}`, 1);
+    await store.set(`ad:count:${me.uid}:${istDayKey()}`, 1);
     await wallet.credit({ userId: me.uid, amount: 50, type: 'spin', refId: 'sp-1' });
     // yesterday's ad does not count today
     await CreditTransaction.collection.updateOne(

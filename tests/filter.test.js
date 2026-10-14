@@ -9,7 +9,7 @@ const { connectTestDeps, resetTestDeps, closeTestDeps } = require('./helpers/db'
 const { createUniqueUser } = require('../src/utils/privateNumber');
 const { signAccessToken } = require('../src/services/token.service');
 const { CreditTransaction, User } = require('../src/models');
-const { redis } = require('../src/config/redis');
+const { store } = require('../src/config/store');
 const sockets = require('../src/sockets');
 const presence = require('../src/services/presence.service');
 const match = require('../src/services/match.service');
@@ -125,7 +125,7 @@ describe('unlock (30.6, 30.7, 30.11)', () => {
     const res = await api(me, 'post', '/filters/unlock').send({ gender: 'female' });
     assert.equal(res.status, 402);
     assert.equal(res.body.code, 'INSUFFICIENT_CREDITS');
-    assert.equal(await redis.exists(filters.unlockKey(me.uid)), 0);
+    assert.equal(await store.exists(filters.unlockKey(me.uid)), 0);
     assert.equal((await api(me, 'post', '/filters/unlock').send({ gender: 'other' })).status, 400);
   });
 
@@ -172,7 +172,7 @@ describe('matching uses the pass (30.8) and refunds (30.9)', () => {
     const refund = await CreditTransaction.findOne({ type: 'refund' }).lean();
     assert.equal(refund.amount, 10000);
     assert.equal(refund.meta.reason, 'no_match');
-    assert.equal(await redis.exists(filters.unlockKey(me.uid)), 0);
+    assert.equal(await store.exists(filters.unlockKey(me.uid)), 0);
     const upd = got(me.s, EVENTS.FILTER_UPDATED).pop();
     assert.deepEqual(upd, { active: null, refunded: true, credits: 10000 });
   });

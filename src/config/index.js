@@ -25,11 +25,6 @@ const schema = Joi.object({
   MONGO_URI: Joi.string()
     .uri({ scheme: ['mongodb', 'mongodb+srv'] })
     .required(),
-  // empty = in-memory store inside the server (one instance, nothing extra to host)
-  REDIS_URL: Joi.string()
-    .uri({ scheme: ['redis', 'rediss'] })
-    .allow('')
-    .default(''),
 
   JWT_ACCESS_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
@@ -160,7 +155,6 @@ const config = {
     .filter(Boolean),
 
   mongo: { uri: env.MONGO_URI },
-  redis: { url: env.REDIS_URL, inMemory: !env.REDIS_URL },
 
   jwt: {
     accessSecret: env.JWT_ACCESS_SECRET,

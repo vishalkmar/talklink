@@ -7,7 +7,7 @@ const mailService = require('../src/services/mail.service');
 const otpService = require('../src/services/otp.service');
 const tokenService = require('../src/services/token.service');
 const ApiError = require('../src/utils/ApiError');
-const { redis } = require('../src/config/redis');
+const { store } = require('../src/config/store');
 const { Otp, User, Session } = require('../src/models');
 
 const EMAIL = 'Rahul.Test@Example.com';
@@ -72,7 +72,7 @@ describe('POST /auth/send-otp', () => {
   it('allows at most 5 codes per hour', async () => {
     for (let i = 0; i < 5; i += 1) {
       assert.equal((await sendOtp()).status, 200);
-      await redis.del(otpService.keys.cooldown(NORM)); // skip the 60s wait
+      await store.del(otpService.keys.cooldown(NORM)); // skip the 60s wait
     }
     const res = await sendOtp();
     assert.equal(res.status, 429);
@@ -87,7 +87,7 @@ describe('POST /auth/send-otp', () => {
     assert.equal(res.status, 502);
     assert.equal(res.body.code, 'EMAIL_SEND_FAILED');
     assert.equal(await Otp.countDocuments({ email: NORM }), 0);
-    assert.equal(await redis.exists(otpService.keys.cooldown(NORM)), 0);
+    assert.equal(await store.exists(otpService.keys.cooldown(NORM)), 0);
   });
 });
 
@@ -113,7 +113,7 @@ describe('POST /auth/verify-otp', () => {
 
   it('returns the same user with isNewUser=false on the next login', async () => {
     const first = await login();
-    await redis.del(otpService.keys.cooldown(NORM));
+    await store.del(otpService.keys.cooldown(NORM));
     const second = await login();
     assert.equal(second.body.data.isNewUser, false);
     assert.equal(second.body.data.user.id, first.body.data.user.id);
@@ -137,10 +137,10 @@ describe('POST /auth/verify-otp', () => {
     assert.equal(fifth.status, 429);
     assert.equal(fifth.body.code, 'OTP_LOCKED');
 
-    const ttl = await redis.ttl(otpService.keys.lock(NORM));
+    const ttl = await store.ttl(otpService.keys.lock(NORM));
     assert.ok(ttl > 890 && ttl <= 900);
     assert.equal((await verify(lastOtp())).body.code, 'OTP_LOCKED');
-    await redis.del(otpService.keys.cooldown(NORM));
+    await store.del(otpService.keys.cooldown(NORM));
     assert.equal((await sendOtp()).body.code, 'OTP_LOCKED');
   });
 
@@ -166,7 +166,7 @@ describe('POST /auth/verify-otp', () => {
   it('blocks suspended accounts', async () => {
     const res = await login();
     await User.updateOne({ _id: res.body.data.user.id }, { status: 'suspended' });
-    await redis.del(otpService.keys.cooldown(NORM));
+    await store.del(otpService.keys.cooldown(NORM));
     const again = await login();
     assert.equal(again.status, 403);
     assert.equal(again.body.code, 'ACCOUNT_SUSPENDED');
