@@ -25,9 +25,11 @@ const schema = Joi.object({
   MONGO_URI: Joi.string()
     .uri({ scheme: ['mongodb', 'mongodb+srv'] })
     .required(),
+  // empty = in-memory store inside the server (one instance, nothing extra to host)
   REDIS_URL: Joi.string()
     .uri({ scheme: ['redis', 'rediss'] })
-    .required(),
+    .allow('')
+    .default(''),
 
   JWT_ACCESS_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
@@ -115,6 +117,11 @@ const schema = Joi.object({
   TRUST_PROXY: Joi.number().integer().min(0).max(5).default(1),
   // optional DNS servers for lookups (e.g. mongodb+srv on a PC whose local DNS refuses SRV queries)
   DNS_SERVERS: Joi.string().allow('').default(''),
+  // keep a free Render instance awake: ping <url>/health/ping every N minutes (production only).
+  // Empty -> Render's own RENDER_EXTERNAL_URL; set KEEP_ALIVE_MINUTES=0 to switch it off.
+  KEEP_ALIVE_URL: Joi.string().uri().allow('').default(''),
+  RENDER_EXTERNAL_URL: Joi.string().allow('').default(''),
+  KEEP_ALIVE_MINUTES: Joi.number().integer().min(0).max(14).default(10),
   LOG_LEVEL: Joi.string()
     .valid('fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent', '')
     .optional(),
@@ -153,7 +160,7 @@ const config = {
     .filter(Boolean),
 
   mongo: { uri: env.MONGO_URI },
-  redis: { url: env.REDIS_URL },
+  redis: { url: env.REDIS_URL, inMemory: !env.REDIS_URL },
 
   jwt: {
     accessSecret: env.JWT_ACCESS_SECRET,
@@ -236,6 +243,10 @@ const config = {
   support: { feedbackTo: env.FEEDBACK_TO_EMAIL, email: env.SUPPORT_EMAIL },
   androidPackage: env.ANDROID_PACKAGE,
   trustProxy: env.TRUST_PROXY,
+  keepAlive: {
+    url: (env.KEEP_ALIVE_URL || env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, ''),
+    minutes: env.KEEP_ALIVE_MINUTES,
+  },
   dnsServers: env.DNS_SERVERS.split(',')
     .map((s) => s.trim())
     .filter(Boolean),
