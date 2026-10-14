@@ -112,7 +112,7 @@ const schema = Joi.object({
   TRUST_PROXY: Joi.number().integer().min(0).max(5).default(1),
   // optional DNS servers for lookups (e.g. mongodb+srv on a PC whose local DNS refuses SRV queries)
   DNS_SERVERS: Joi.string().allow('').default(''),
-  // keep a free Render instance awake: ping <url>/health/ping every N minutes (production only).
+  // keep a free Render instance awake: ping <url>/health/ping every N minutes (whenever a URL is known).
   // Empty -> Render's own RENDER_EXTERNAL_URL; set KEEP_ALIVE_MINUTES=0 to switch it off.
   KEEP_ALIVE_URL: Joi.string().uri().allow('').default(''),
   RENDER_EXTERNAL_URL: Joi.string().allow('').default(''),

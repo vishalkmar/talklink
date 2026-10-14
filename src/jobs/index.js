@@ -67,7 +67,8 @@ const startJobs = () => {
       timezone: 'Asia/Kolkata',
     }),
   );
-  if (config.isProd && config.keepAlive.url && config.keepAlive.minutes > 0) {
+  // only where a public URL exists (Render sets RENDER_EXTERNAL_URL) - never on a dev PC
+  if (config.keepAlive.url && config.keepAlive.minutes > 0) {
     tasks.push(
       cron.schedule(
         `*/${config.keepAlive.minutes} * * * *`,
