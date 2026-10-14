@@ -1,6 +1,9 @@
 // Redis: one client for commands, a duplicate for pub/sub (a subscribed connection
 // can't run normal commands). The Socket.IO adapter reuses both in Phase 13.
+// REDIS_URL empty -> an in-memory store with the same API (config/memoryRedis.js): no Redis
+// service needed, but only ONE server instance (state lives in this process).
 const Redis = require('ioredis');
+const { MemoryRedis } = require('./memoryRedis');
 const config = require('./index');
 const logger = require('../utils/logger');
 const { registerCheck } = require('../services/health.service');
@@ -11,7 +14,9 @@ const options = {
   retryStrategy: (times) => Math.min(times * 200, 5000),
 };
 
-const redis = new Redis(config.redis.url, { ...options, connectionName: 'talklink-cmd' });
+const redis = config.redis.inMemory
+  ? new MemoryRedis()
+  : new Redis(config.redis.url, { ...options, connectionName: 'talklink-cmd' });
 const redisSub = redis.duplicate({ connectionName: 'talklink-sub' });
 
 for (const [name, client] of [
@@ -24,7 +29,7 @@ for (const [name, client] of [
 
 const connectRedis = async () => {
   await Promise.all([redis.connect(), redisSub.connect()]);
-  logger.info('Redis connected');
+  logger.info(config.redis.inMemory ? 'Using in-memory store (no REDIS_URL)' : 'Redis connected');
 };
 
 const disconnectRedis = async () => {

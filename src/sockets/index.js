@@ -42,7 +42,8 @@ const initSockets = (httpServer, { useRedisAdapter = true } = {}) => {
     serveClient: false,
   });
 
-  if (useRedisAdapter) io.adapter(createAdapter(redis, redisSub)); // 13.2
+  // 13.2 multi-instance sync; not needed (and not possible) with the in-memory store
+  if (useRedisAdapter && !config.redis.inMemory) io.adapter(createAdapter(redis, redisSub));
   emitter.setIO(io);
 
   io.use(socketAuth);

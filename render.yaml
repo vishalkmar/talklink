@@ -1,5 +1,5 @@
 # Render Blueprint for the TalkLink API. In Render: New -> Blueprint -> pick this repo.
-# It creates the web service and a Redis (Key Value) instance. Values marked `sync: false` are
+# It creates the web service (no Redis - the server keeps that state in memory). Values marked `sync: false` are
 # asked for in the Render dashboard (fill them now or later - the server starts without them and
 # logs which features are off). Full list: .env.example.
 services:
@@ -26,11 +26,6 @@ services:
       # databases
       - key: MONGO_URI
         sync: false # MongoDB Atlas connection string (replica set, e.g. mongodb+srv://...)
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: talklink-redis
-          property: connectionString
       # login tokens - Render generates long random values
       - key: JWT_ACCESS_SECRET
         generateValue: true
@@ -72,10 +67,3 @@ services:
         sync: false
       - key: ADMIN_API_KEY
         sync: false
-
-  - type: keyvalue
-    name: talklink-redis
-    region: singapore
-    plan: free # no persistence on free; sessions / presence / counters rebuild themselves
-    maxmemoryPolicy: noeviction
-    ipAllowList: [] # only reachable from Render services in this account

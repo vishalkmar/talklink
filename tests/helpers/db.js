@@ -13,7 +13,8 @@ const assertTestTarget = () => {
   const uri = process.env.MONGO_URI || '';
   const dbName = (uri.split('/')[3] || '').split('?')[0];
   const redisDb = (process.env.REDIS_URL || '').split('/')[3];
-  if (process.env.NODE_ENV !== 'test' || !dbName.endsWith('_test') || redisDb !== '15') {
+  const redisOk = process.env.REDIS_URL === '' || redisDb === '15'; // '' = in-memory store
+  if (process.env.NODE_ENV !== 'test' || !dbName.endsWith('_test') || !redisOk) {
     throw new Error(
       `Refusing to run tests against "${dbName}" / redis db "${redisDb}". Use npm test (loads tests/setupEnv.js).`,
     );
