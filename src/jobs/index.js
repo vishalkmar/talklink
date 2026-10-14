@@ -4,6 +4,7 @@
 // double 8 PM pushes).
 const cron = require('node-cron');
 const { redis } = require('../config/redis');
+const config = require('../config');
 const logger = require('../utils/logger');
 const { captureError } = require('../utils/monitoring');
 const presence = require('../services/presence.service');
@@ -38,6 +39,13 @@ const runSafely = (name, fn) => async () => {
   }
 };
 
+// Free Render instances sleep after 15 min without requests: hit our own public URL.
+const keepAlive = async (base = config.keepAlive.url) => {
+  const res = await fetch(`${base}/health/ping`, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`keep-alive ping answered ${res.status}`);
+  return null; // nothing to log when it worked
+};
+
 const startJobs = () => {
   // 14.11 every minute: drop users whose heartbeat stopped (killed app, crashed instance).
   tasks.push(cron.schedule('* * * * *', runSafely('presence-cleanup', presence.cleanupStale)));
@@ -59,6 +67,14 @@ const startJobs = () => {
       timezone: 'Asia/Kolkata',
     }),
   );
+  if (config.isProd && config.keepAlive.url && config.keepAlive.minutes > 0) {
+    tasks.push(
+      cron.schedule(
+        `*/${config.keepAlive.minutes} * * * *`,
+        runSafely('keep-alive', () => keepAlive()),
+      ),
+    );
+  }
   logger.info({ jobs: tasks.length }, 'Scheduled jobs started');
 };
 
@@ -67,4 +83,4 @@ const stopJobs = async () => {
   tasks.length = 0;
 };
 
-module.exports = { startJobs, stopJobs, runSafely, takeLock };
+module.exports = { startJobs, stopJobs, runSafely, takeLock, keepAlive };

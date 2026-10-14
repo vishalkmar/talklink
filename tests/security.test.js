@@ -26,6 +26,7 @@ const PUBLIC = new Set([
   'POST /api/v1/payments/webhook', // Cashfree calls it; verified by HMAC signature
   'GET /api/v1/content/faq',
   'GET /health/',
+  'GET /health/ping', // keep-alive, no data
 ]);
 
 // [{ method, path }] for every router.METHOD('path', ...) in the route files

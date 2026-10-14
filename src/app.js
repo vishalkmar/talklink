@@ -38,7 +38,7 @@ app.use(
       req: (req) => ({ id: req.id, method: req.method, url: req.url }),
       res: (res) => ({ statusCode: res.statusCode }),
     },
-    autoLogging: { ignore: (req) => req.url === '/health' },
+    autoLogging: { ignore: (req) => req.url.startsWith('/health') },
   }),
 );
 

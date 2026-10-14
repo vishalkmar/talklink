@@ -1,13 +1,13 @@
 # Render Blueprint for the TalkLink API. In Render: New -> Blueprint -> pick this repo.
 # It creates the web service and a Redis (Key Value) instance. Values marked `sync: false` are
 # asked for in the Render dashboard (fill them now or later - the server starts without them and
-# logs which features are off). Full list: .env.example and README.md.
+# logs which features are off). Full list: .env.example.
 services:
   - type: web
     name: talklink-api
     runtime: node
     region: singapore # closest Render region to India
-    plan: starter # free instances sleep after 15 min idle -> calls / sockets drop
+    plan: free # sleeps after 15 min idle - the app pings itself (/health/ping, KEEP_ALIVE_MINUTES)
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /health
@@ -21,6 +21,8 @@ services:
         value: '1'
       - key: DEV_OTP_BYPASS
         value: 'false'
+      - key: KEEP_ALIVE_MINUTES
+        value: '10'
       # databases
       - key: MONGO_URI
         sync: false # MongoDB Atlas connection string (replica set, e.g. mongodb+srv://...)
@@ -74,6 +76,6 @@ services:
   - type: keyvalue
     name: talklink-redis
     region: singapore
-    plan: starter # free Key Value has no persistence; locks / counters are fine either way
+    plan: free # no persistence on free; sessions / presence / counters rebuild themselves
     maxmemoryPolicy: noeviction
     ipAllowList: [] # only reachable from Render services in this account
