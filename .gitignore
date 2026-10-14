@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# env & secrets (only .env.example is committed)
+.env
+.env.*
+!.env.example
+firebase-service-account*.json
+service-account*.json
+
+# logs & coverage
+logs/
+*.log
+coverage/

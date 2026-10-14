@@ -1,0 +1,51 @@
+{
+  "name": "talklink-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TalkLink API + Socket.IO server",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "lint": "eslint . --max-warnings 0",
+    "check:secrets": "node scripts/check-secrets.js",
+    "test": "node --test --test-concurrency=1 --require ./tests/setupEnv.js \"tests/**/*.test.js\"",
+    "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include=\"src/**\" --require ./tests/setupEnv.js \"tests/**/*.test.js\"",
+    "seed": "node scripts/seed.js",
+    "seed:calls": "node scripts/seed-calls.js"
+  },
+  "dependencies": {
+    "@sentry/node": "^10.76.2",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "axios": "^1.20.0",
+    "compression": "^1.8.2",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.5",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.1",
+    "firebase-admin": "^14.5.0",
+    "helmet": "^8.3.0",
+    "ioredis": "^6.0.0",
+    "joi": "^18.2.9",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.11.0",
+    "node-cron": "^4.6.0",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "socket.io": "^4.8.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.13.0",
+    "nodemon": "^3.1.14",
+    "pino-pretty": "^13.2.0",
+    "socket.io-client": "^4.8.4",
+    "supertest": "^7.3.1"
+  }
+}
