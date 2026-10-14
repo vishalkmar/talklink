@@ -1,9 +1,9 @@
 // Scheduled jobs (node-cron). Started by server.js, never in tests.
-// 34.8 several server processes (PM2 cluster / containers) all schedule the same jobs; a Redis
+// 34.8 several server processes (PM2 cluster / containers) all schedule the same jobs; a Store
 // lock per job and minute makes exactly one of them do the work (no double streak resets or
 // double 8 PM pushes).
 const cron = require('node-cron');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const config = require('../config');
 const logger = require('../utils/logger');
 const { captureError } = require('../utils/monitoring');
@@ -18,7 +18,7 @@ const LOCK_TTL_SEC = 55; // shorter than the shortest schedule (every minute)
 // true for the one process that may run `name` in this minute
 const takeLock = async (name, now = Date.now()) => {
   const slot = Math.floor(now / 60000);
-  const ok = await redis.set(
+  const ok = await store.set(
     `job:lock:${name}:${slot}`,
     String(process.pid),
     'EX',

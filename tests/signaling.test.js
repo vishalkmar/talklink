@@ -13,7 +13,7 @@ const app = require('../src/app');
 const { connectTestDeps, resetTestDeps, closeTestDeps } = require('./helpers/db');
 const { createUniqueUser } = require('../src/utils/privateNumber');
 const { signAccessToken } = require('../src/services/token.service');
-const { redis } = require('../src/config/redis');
+const { store } = require('../src/config/store');
 const { Call, User, Block } = require('../src/models');
 const sockets = require('../src/sockets');
 const presence = require('../src/services/presence.service');
@@ -214,7 +214,7 @@ describe('call lifecycle (17.7 / 17.8 / 17.15 / 17.16)', () => {
     assert.equal(res.ok, true);
     assert.equal((await Call.findById(roomId)).status, 'active');
     // pretend the call has been going for 2 min 5 s
-    await redis.hset(callSession.keys.call(roomId), 'startedAt', Date.now() - 125000);
+    await store.hset(callSession.keys.call(roomId), 'startedAt', Date.now() - 125000);
 
     const end = await ack(caller.s, EVENTS.CALL_END, { roomId });
     assert.equal(end.durationSec, 125);

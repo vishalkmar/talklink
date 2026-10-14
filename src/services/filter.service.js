@@ -5,10 +5,10 @@
 // out before the pass ever produced a match, the credits are refunded automatically and the pass
 // closes. Premium users never pay (30.10).
 //
-// Redis  filter:unlocked:<uid> = JSON { gender, until, ref, matched } (TTL = pass length)
+// Store  filter:unlocked:<uid> = JSON { gender, until, ref, matched } (TTL = pass length)
 const crypto = require('crypto');
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
 const emitter = require('../sockets/emitter');
@@ -27,7 +27,7 @@ const isPremiumActive = (user) =>
   Boolean(user && user.isPremium && (!user.premiumUntil || user.premiumUntil > new Date()));
 
 const readPass = async (uid) => {
-  const raw = await redis.get(unlockKey(String(uid)));
+  const raw = await store.get(unlockKey(String(uid)));
   if (!raw) return null;
   try {
     const p = JSON.parse(raw);
@@ -80,7 +80,7 @@ const unlock = async (user, gender) => {
   });
   const until = Date.now() + settings.passMs;
   // switching filter (female -> male) replaces the previous pass; it had already been used
-  await redis.set(
+  await store.set(
     unlockKey(uid),
     JSON.stringify({ gender, until, ref, matched: false }),
     'PX',
@@ -96,8 +96,8 @@ const markMatched = async (uid) => {
   const key = unlockKey(String(uid));
   const pass = await readPass(uid);
   if (!pass || !pass.ref || pass.matched) return;
-  const ttl = await redis.pttl(key);
-  if (ttl > 0) await redis.set(key, JSON.stringify({ ...pass, matched: true }), 'PX', ttl);
+  const ttl = await store.pttl(key);
+  if (ttl > 0) await store.set(key, JSON.stringify({ ...pass, matched: true }), 'PX', ttl);
 };
 
 // 30.9 a filtered search timed out: refund an unused pass. Returns true when refunded.
@@ -106,7 +106,7 @@ const refundIfUnused = async (uid) => {
   const pass = await readPass(uid);
   if (!pass || !pass.ref || pass.matched) return false;
   // claim the refund once (two timeouts at once can't both pay)
-  if (!(await redis.set(`${key}:refund`, '1', 'EX', 3600, 'NX'))) return false;
+  if (!(await store.set(`${key}:refund`, '1', 'EX', 3600, 'NX'))) return false;
   const wallet = require('./wallet.service');
   await wallet.credit({
     userId: String(uid),
@@ -115,7 +115,7 @@ const refundIfUnused = async (uid) => {
     refId: `refund:${pass.ref}`,
     meta: { reason: 'no_match', gender: pass.gender },
   });
-  await redis.del(key, `${key}:refund`);
+  await store.del(key, `${key}:refund`);
   notify(uid, { active: null, refunded: true, credits: settings.cost });
   logger.info({ userId: String(uid), gender: pass.gender }, 'Gender filter refunded');
   return true;

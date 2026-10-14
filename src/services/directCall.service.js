@@ -9,7 +9,7 @@
 //   caller already in a call / search / chat             -> 409 BUSY
 //   callee in a call / chat (or another call is ringing)  -> 409 USER_BUSY
 const mongoose = require('mongoose');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const Call = require('../models/Call');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
@@ -48,11 +48,11 @@ const checkPrivacy = async (callee, callerId) => {
 
 const checkRateLimit = async (callerId) => {
   const key = `rl:direct:${callerId}`;
-  const count = await redis.incr(key);
-  if (count === 1) await redis.expire(key, 3600);
+  const count = await store.incr(key);
+  if (count === 1) await store.expire(key, 3600);
   if (count > settings.perHour) {
     throw ApiError.tooMany('Too many calls. Try again later.', 'RATE_LIMITED', {
-      retryAfterSec: await redis.ttl(key),
+      retryAfterSec: await store.ttl(key),
     });
   }
 };

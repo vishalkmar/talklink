@@ -8,14 +8,14 @@ const { connectTestDeps, resetTestDeps, closeTestDeps } = require('./helpers/db'
 const { createUniqueUser } = require('../src/utils/privateNumber');
 const { signAccessToken } = require('../src/services/token.service');
 const { CreditTransaction, User } = require('../src/models');
-const { redis } = require('../src/config/redis');
+const { store } = require('../src/config/store');
 const spin = require('../src/services/spin.service');
 const ads = require('../src/services/ads.service');
 
 let me;
 const api = (method, path) =>
   request(app)[method](`/api/v1${path}`).set('Authorization', `Bearer ${me.token}`);
-const giveAdSpins = (n) => redis.set(spin.keys.extra(me.uid), n);
+const giveAdSpins = (n) => store.set(spin.keys.extra(me.uid), n);
 
 before(connectTestDeps);
 
@@ -119,7 +119,7 @@ describe('POST /spin (29.4, 29.5, 29.9, 29.10, 29.13)', () => {
     const ok = res.filter((r) => r.status === 200);
     assert.equal(ok.length, 2); // 1 free + 1 token
     assert.equal(await CreditTransaction.countDocuments({ type: 'spin' }), 2);
-    assert.equal(Number(await redis.get(spin.keys.count(me.uid))), 2);
+    assert.equal(Number(await store.get(spin.keys.count(me.uid))), 2);
   });
 });
 

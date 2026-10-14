@@ -7,7 +7,7 @@ const { initMonitoring, captureError, flushMonitoring } = require('./utils/monit
 initMonitoring(); // 34.4 Sentry, before anything else can fail
 const app = require('./app');
 const { connectDB, disconnectDB } = require('./config/db');
-const { connectRedis, disconnectRedis } = require('./config/redis');
+const { connectStore, disconnectStore } = require('./config/store');
 const { initSockets, closeSockets } = require('./sockets');
 const { startJobs, stopJobs } = require('./jobs');
 const { initPush } = require('./services/push.service');
@@ -15,10 +15,10 @@ const { initPush } = require('./services/push.service');
 const server = http.createServer(app);
 
 // Resources to close on shutdown, in order (after the HTTP server stops accepting).
-const closers = [stopJobs, disconnectDB, disconnectRedis];
+const closers = [stopJobs, disconnectDB, disconnectStore];
 
 const start = async () => {
-  await Promise.all([connectDB(), connectRedis()]);
+  await Promise.all([connectDB(), connectStore()]);
   initPush(); // FCM (skipped when FIREBASE_SERVICE_ACCOUNT is empty)
   initSockets(server);
   startJobs();

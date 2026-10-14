@@ -5,11 +5,11 @@
 // A spin = weighted random segment -> wallet credit (type 'spin', refId spin:<uid>:<day>:<n>,
 // meta { segmentIndex, credits, free }) -> wallet:updated.
 //
-// Redis:
+// Store:
 //   spin:count:<uid>:<day>   spins used today (reserved with INCR, so parallel taps can't exceed)
 //   spin:extra:<uid>:<day>   ad-earned spin tokens (written by ads.service)
 const crypto = require('crypto');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const CreditTransaction = require('../models/CreditTransaction');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
@@ -60,8 +60,8 @@ const status = async (userId) => {
   const uid = String(userId);
   const limits = await limitsFor(uid);
   const [used, extra, history] = await Promise.all([
-    redis.get(K.count(uid)).then((n) => Number(n) || 0),
-    redis.get(K.extra(uid)).then((n) => Number(n) || 0),
+    store.get(K.count(uid)).then((n) => Number(n) || 0),
+    store.get(K.extra(uid)).then((n) => Number(n) || 0),
     CreditTransaction.find({ userId: uid, type: 'spin' }).sort({ createdAt: -1 }).limit(10).lean(),
   ]);
   const left = Math.max(0, limits.perDay - used);
@@ -89,9 +89,9 @@ const spin = async (userId) => {
   const uid = String(userId);
   const limits = await limitsFor(uid);
   const countKey = K.count(uid);
-  const n = await redis.incr(countKey); // reserve this spin's slot first
-  if (n === 1) await redis.expire(countKey, TTL_SEC);
-  const release = () => redis.decr(countKey);
+  const n = await store.incr(countKey); // reserve this spin's slot first
+  if (n === 1) await store.expire(countKey, TTL_SEC);
+  const release = () => store.decr(countKey);
 
   if (n > limits.perDay) {
     await release();
@@ -100,9 +100,9 @@ const spin = async (userId) => {
   const free = n <= limits.freePerDay;
   if (!free) {
     // use one ad-earned token; none -> the app shows a video first (29.12: nothing is used up)
-    const left = await redis.decr(K.extra(uid));
+    const left = await store.decr(K.extra(uid));
     if (left < 0) {
-      await redis.incr(K.extra(uid));
+      await store.incr(K.extra(uid));
       await release();
       throw new ApiError(402, 'AD_REQUIRED', 'Watch a short video to spin again');
     }
@@ -122,7 +122,7 @@ const spin = async (userId) => {
   } catch (err) {
     // give the spin (and the token) back if the credit failed
     await release();
-    if (!free) await redis.incr(K.extra(uid));
+    if (!free) await store.incr(K.extra(uid));
     throw err;
   }
   logger.info({ userId: uid, segmentIndex, credits, free }, 'Spin');

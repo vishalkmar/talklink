@@ -1,14 +1,14 @@
-// Blocks (Phase 12 block, Phase 24 unblock, Phase 26 list + Redis cache + side effects).
+// Blocks (Phase 12 block, Phase 24 unblock, Phase 26 list + store cache + side effects).
 // A block works both ways: neither side can call, message, match or find the other (26.9).
 //
-// Redis cache (26.10): blocks:<uid> = SET of user ids blocked by or blocking <uid>, plus a
+// store cache (26.10): blocks:<uid> = SET of user ids blocked by or blocking <uid>, plus a
 // marker member so an empty set is cached too. Rebuilt from Mongo on a miss, dropped for both
 // users on every block / unblock.
 const mongoose = require('mongoose');
 const Block = require('../models/Block');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const { toPublicUser } = require('../utils/serializers');
 const emitter = require('../sockets/emitter');
 const EVENTS = require('../constants/socketEvents.json');
@@ -22,7 +22,7 @@ const notFound = () => ApiError.notFound('User not found', 'USER_NOT_FOUND');
 // Everyone this user must never meet (blocked by them or blocking them).
 const blockedIdsOf = async (uid) => {
   const key = cacheKey(String(uid));
-  const cached = await redis.smembers(key);
+  const cached = await store.smembers(key);
   if (cached.length) return new Set(cached.filter((id) => id !== MARKER));
   const rows = await Block.find({ $or: [{ blockerId: uid }, { blockedId: uid }] })
     .select('blockerId blockedId')
@@ -30,7 +30,7 @@ const blockedIdsOf = async (uid) => {
   const ids = rows.map((b) =>
     String(String(b.blockerId) === String(uid) ? b.blockedId : b.blockerId),
   );
-  await redis
+  await store
     .multi()
     .sadd(key, MARKER, ...ids)
     .expire(key, CACHE_TTL_SEC)
@@ -38,7 +38,7 @@ const blockedIdsOf = async (uid) => {
   return new Set(ids);
 };
 
-const dropCache = (a, b) => redis.del(cacheKey(String(a)), cacheKey(String(b)));
+const dropCache = (a, b) => store.del(cacheKey(String(a)), cacheKey(String(b)));
 
 // True if either user has blocked the other.
 const isBlockedEitherWay = async (userA, userB) =>

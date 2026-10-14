@@ -1,5 +1,5 @@
-// IP-based limits. Per-email OTP limits live in Redis (Phase 4).
-// NOTE: in-memory store - switch to a Redis store when running multiple instances (Phase 34).
+// IP-based limits. Per-email OTP limits live in the store (Phase 4).
+// NOTE: in-memory store - switch to a Store store when running multiple instances (Phase 34).
 const rateLimit = require('express-rate-limit');
 const ApiError = require('../utils/ApiError');
 const config = require('../config');

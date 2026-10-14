@@ -10,7 +10,7 @@ const app = require('../src/app');
 const { connectTestDeps, resetTestDeps, closeTestDeps } = require('./helpers/db');
 const { createUniqueUser } = require('../src/utils/privateNumber');
 const { signAccessToken } = require('../src/services/token.service');
-const { redis } = require('../src/config/redis');
+const { store } = require('../src/config/store');
 const { User } = require('../src/models');
 const sockets = require('../src/sockets');
 const presence = require('../src/services/presence.service');
@@ -41,7 +41,7 @@ const makeUser = async (email, fields = {}) => {
 };
 
 const setState = (s, payload) => s.timeout(2000).emitWithAck(EVENTS.PRESENCE_SET, payload);
-const inPool = async (key, uid) => (await redis.zscore(key, uid)) !== null;
+const inPool = async (key, uid) => (await store.zscore(key, uid)) !== null;
 
 before(async () => {
   presence.settings.offlineGraceMs = 150;
@@ -192,12 +192,12 @@ describe('presence transitions (socket)', () => {
 describe('stale cleanup + endpoints', () => {
   it('cleanupStale removes members whose heartbeat stopped', async () => {
     const old = Date.now() - presence.settings.staleMs - 1000;
-    await redis.zadd(K.online, old, 'ghost');
-    await redis.zadd(K.available, old, 'ghost');
-    await redis.zadd(K.online, Date.now(), 'alive');
+    await store.zadd(K.online, old, 'ghost');
+    await store.zadd(K.available, old, 'ghost');
+    await store.zadd(K.online, Date.now(), 'alive');
     assert.equal(await presence.onlineCount(), 1); // stale ones never count
     assert.equal(await presence.cleanupStale(), 2);
-    assert.equal(await redis.zscore(K.available, 'ghost'), null);
+    assert.equal(await store.zscore(K.available, 'ghost'), null);
   });
 
   it('GET /stats/online counts online users', async () => {

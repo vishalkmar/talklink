@@ -2,7 +2,7 @@
 // the team inbox (FEEDBACK_TO_EMAIL) through Brevo. The email is best effort - the document is
 // the record. 5 messages per user per hour.
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const Feedback = require('../models/Feedback');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
@@ -45,8 +45,8 @@ const emailTeam = async (doc, user) => {
 
 const submit = async (user, { type, message, contact }, { appVersion, platform } = {}) => {
   const key = `feedback:hour:${user._id}`;
-  const count = await redis.incr(key);
-  if (count === 1) await redis.expire(key, 3600);
+  const count = await store.incr(key);
+  if (count === 1) await store.expire(key, 3600);
   if (count > settings.perHour) {
     throw ApiError.tooMany(
       'You sent a lot of messages. Please try again in a while.',

@@ -8,7 +8,7 @@ const pinoHttp = require('pino-http');
 
 const config = require('./config');
 require('./config/db'); // registers the mongo health check
-require('./config/redis'); // registers the redis health check
+require('./config/store'); // registers the store health check
 const logger = require('./utils/logger');
 const requestId = require('./middlewares/requestId');
 const sanitize = require('./middlewares/sanitize');

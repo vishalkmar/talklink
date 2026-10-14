@@ -7,7 +7,7 @@ const app = require('../src/app');
 const { connectTestDeps, resetTestDeps, closeTestDeps } = require('./helpers/db');
 const { createUniqueUser } = require('../src/utils/privateNumber');
 const { signAccessToken } = require('../src/services/token.service');
-const { redis } = require('../src/config/redis');
+const { store } = require('../src/config/store');
 const { Block, Call } = require('../src/models');
 const sockets = require('../src/sockets');
 const presence = require('../src/services/presence.service');
@@ -96,7 +96,7 @@ describe('match:request', () => {
     const c = await person('c@t.io');
     const locked = await ack(c.s, EVENTS.MATCH_REQUEST, { mode: 'audio', connectWith: 'female' });
     assert.equal(locked.code, 'FILTER_LOCKED');
-    await redis.set(filterService.unlockKey(c.uid), '1', 'EX', 60);
+    await store.set(filterService.unlockKey(c.uid), '1', 'EX', 60);
     const ok = await ack(c.s, EVENTS.MATCH_REQUEST, { mode: 'audio', connectWith: 'female' });
     assert.equal(ok.ok, true);
   });
@@ -154,8 +154,8 @@ describe('broadcast + first accept wins', () => {
     assert.equal((await presence.getPresence(c.uid)).state, presence.STATE.IN_CALL);
     assert.equal((await presence.getPresence(a.uid)).state, presence.STATE.IN_CALL);
     // Phase 17: the audio call is registered for signaling
-    assert.equal(await redis.get(`user:${c.uid}:call`), accepted.roomId);
-    assert.equal(await redis.get(`user:${a.uid}:call`), accepted.roomId);
+    assert.equal(await store.get(`user:${c.uid}:call`), accepted.roomId);
+    assert.equal(await store.get(`user:${a.uid}:call`), accepted.roomId);
 
     // late accept by someone else
     const late = await ack(b.s, EVENTS.MATCH_ACCEPT, { requestId: req.requestId });
@@ -202,7 +202,7 @@ describe('who gets offered (15.5)', () => {
     const recent = await person('r@t.io');
     await Block.create({ blockerId: c.uid, blockedId: blockedByCaller.uid });
     await Block.create({ blockerId: blockedCaller.uid, blockedId: c.uid });
-    await redis.zadd(match.keys.recent(c.uid), Date.now(), recent.uid);
+    await store.zadd(match.keys.recent(c.uid), Date.now(), recent.uid);
 
     await ack(c.s, EVENTS.MATCH_REQUEST, { mode: 'audio' });
     await waitFor(ok.s, EVENTS.MATCH_INCOMING);
@@ -216,7 +216,7 @@ describe('who gets offered (15.5)', () => {
     const c = await person('caller@t.io', { gender: 'male' });
     const f = await person('f@t.io', { gender: 'female' });
     const m = await person('m@t.io', { gender: 'male' });
-    await redis.set(filterService.unlockKey(c.uid), '1', 'EX', 60);
+    await store.set(filterService.unlockKey(c.uid), '1', 'EX', 60);
     await ack(c.s, EVENTS.MATCH_REQUEST, { mode: 'audio', connectWith: 'female' });
     await waitFor(f.s, EVENTS.MATCH_INCOMING);
     await sleep(300);
@@ -244,8 +244,8 @@ describe('who gets offered (15.5)', () => {
     const c2 = await person('c2@t.io');
     const cand = await person('cand@t.io');
     // c1 and c2 are available too, so they could be offered each other - exclude via recent
-    await redis.zadd(match.keys.recent(c1.uid), Date.now(), c2.uid);
-    await redis.zadd(match.keys.recent(c2.uid), Date.now(), c1.uid);
+    await store.zadd(match.keys.recent(c1.uid), Date.now(), c2.uid);
+    await store.zadd(match.keys.recent(c2.uid), Date.now(), c1.uid);
     await ack(c1.s, EVENTS.MATCH_REQUEST, { mode: 'audio' });
     await waitFor(cand.s, EVENTS.MATCH_INCOMING);
     await ack(c2.s, EVENTS.MATCH_REQUEST, { mode: 'audio' });

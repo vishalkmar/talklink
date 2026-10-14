@@ -10,14 +10,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-        ports: ['6380:6379']
-        options: --health-cmd "redis-cli ping" --health-interval 5s --health-retries 10
     env:
       TEST_MONGO_URI: mongodb://127.0.0.1:27017/talklink_test?replicaSet=rs0&directConnection=true
-      TEST_REDIS_URL: redis://127.0.0.1:6380/15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

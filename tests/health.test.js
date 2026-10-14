@@ -8,14 +8,14 @@ before(connectTestDeps);
 after(closeTestDeps);
 
 describe('GET /health', () => {
-  it('returns status, version, uptime and Mongo/Redis state', async () => {
+  it('returns status, version, uptime and Mongo/store state', async () => {
     const res = await request(app).get('/health');
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
     assert.equal(res.body.data.status, 'ok');
     assert.equal(typeof res.body.data.version, 'string');
     assert.equal(typeof res.body.data.uptimeSec, 'number');
-    assert.deepEqual(res.body.data.dependencies, { mongo: 'up', redis: 'up' });
+    assert.deepEqual(res.body.data.dependencies, { mongo: 'up', store: 'up' });
   });
 
   it('echoes a request id header', async () => {

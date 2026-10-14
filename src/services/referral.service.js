@@ -6,7 +6,7 @@
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const config = require('../config');
-const { redis } = require('../config/redis');
+const { store } = require('../config/store');
 const User = require('../models/User');
 const CreditTransaction = require('../models/CreditTransaction');
 const ApiError = require('../utils/ApiError');
@@ -132,8 +132,8 @@ const applyCode = async (userId, rawCode) => {
     });
     balance = mine.balance;
     const dayKey = `referral:paid:${inviter._id}:${istDayKey(now)}`;
-    const paidToday = await redis.incr(dayKey);
-    if (paidToday === 1) await redis.expire(dayKey, 2 * 24 * 3600);
+    const paidToday = await store.incr(dayKey);
+    if (paidToday === 1) await store.expire(dayKey, 2 * 24 * 3600);
     if (paidToday <= settings.maxPerDay) {
       await wallet().credit({
         userId: inviter._id,

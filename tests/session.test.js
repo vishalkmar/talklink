@@ -168,8 +168,8 @@ describe('ending (25.5 / 25.6 / 25.8 - 25.10)', () => {
 
   it('aura for the session length (25.10)', async () => {
     const { conversationId, callId } = await textMatch(a, b);
-    const { redis } = require('../src/config/redis');
-    await redis.hset(sessions.keys.session(conversationId), 'startedAt', Date.now() - 130000);
+    const { store } = require('../src/config/store');
+    await store.hset(sessions.keys.session(conversationId), 'startedAt', Date.now() - 130000);
     await ack(a.s, EVENTS.SESSION_END, { conversationId });
     const call = await Call.findById(callId).lean();
     assert.ok(call.durationSec >= 130);
