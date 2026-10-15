@@ -15,6 +15,7 @@ const goalRoutes = require('./goal.routes');
 const referralRoutes = require('./referral.routes');
 const feedbackRoutes = require('./feedback.routes');
 const contentRoutes = require('./content.routes');
+const mediaRoutes = require('./media.routes');
 const blockRoutes = require('./block.routes');
 const statsRoutes = require('./stats.routes');
 const adminRoutes = require('./admin.routes');
@@ -36,6 +37,7 @@ router.use('/goals', goalRoutes);
 router.use('/referrals', referralRoutes);
 router.use('/feedback', feedbackRoutes);
 router.use('/content', contentRoutes);
+router.use('/media', mediaRoutes);
 router.use('/stats', statsRoutes);
 router.use('/admin', adminRoutes);
 
