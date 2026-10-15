@@ -14,6 +14,11 @@ const FEATURE_KEYS = {
   'TURN relay for calls': ['TURN_HOST', 'TURN_SECRET'],
   'Push notifications (Firebase)': ['FIREBASE_SERVICE_ACCOUNT'],
   'Payments (Cashfree)': ['CASHFREE_APP_ID', 'CASHFREE_SECRET_KEY'],
+  'Voice messages / status media (Cloudinary)': [
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+  ],
 };
 
 const schema = Joi.object({
@@ -60,6 +65,10 @@ const schema = Joi.object({
   // comma-separated real rewarded ad unit ids; empty = accept any (dev / test ids)
   ADMOB_AD_UNIT_IDS: Joi.string().allow('').default(''),
 
+  // media for voice messages / status (Phase 36-37)
+  CLOUDINARY_CLOUD_NAME: optionalKey(Joi.string()),
+  CLOUDINARY_API_KEY: optionalKey(Joi.string()),
+  CLOUDINARY_API_SECRET: optionalKey(Joi.string()),
   CASHFREE_APP_ID: optionalKey(Joi.string()),
   CASHFREE_SECRET_KEY: optionalKey(Joi.string()),
   CASHFREE_WEBHOOK_SECRET: Joi.string().allow('').optional(),
@@ -196,6 +205,11 @@ const config = {
       .filter(Boolean),
   },
 
+  cloudinary: {
+    cloudName: env.CLOUDINARY_CLOUD_NAME,
+    apiKey: env.CLOUDINARY_API_KEY,
+    apiSecret: env.CLOUDINARY_API_SECRET,
+  },
   cashfree: {
     appId: env.CASHFREE_APP_ID,
     secretKey: env.CASHFREE_SECRET_KEY,
