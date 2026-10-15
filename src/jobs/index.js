@@ -10,6 +10,7 @@ const { captureError } = require('../utils/monitoring');
 const presence = require('../services/presence.service');
 const payments = require('../services/payment.service');
 const gamification = require('../services/gamification.service');
+const chat = require('../services/chat.service');
 
 const tasks = [];
 
@@ -54,6 +55,13 @@ const startJobs = () => {
     cron.schedule('5 0 * * *', runSafely('premium-expiry', payments.expirePremium), {
       timezone: 'Asia/Kolkata',
     }),
+  );
+  // 36.7 delete voice files of opened view-once / expiring random-chat messages
+  tasks.push(
+    cron.schedule(
+      '*/5 * * * *',
+      runSafely('media-purge', () => chat.purgeMedia()),
+    ),
   );
   // 32.3 streaks of people who missed yesterday
   tasks.push(

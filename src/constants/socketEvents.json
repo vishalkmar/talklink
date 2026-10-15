@@ -31,6 +31,8 @@
   "CHAT_SEEN": "chat:seen",
   "CHAT_TYPING": "chat:typing",
   "CHAT_STOP_TYPING": "chat:stop-typing",
+  "CHAT_OPEN_ONCE": "chat:open-once",
+  "CHAT_OPENED": "chat:opened",
   "SESSION_NEXT": "session:next",
   "SESSION_END": "session:end",
   "SESSION_ENDED": "session:ended",

@@ -21,29 +21,55 @@ const push = require('./push.service');
 const emitter = require('../sockets/emitter');
 const registry = require('../sockets/registry');
 const EVENTS = require('../constants/socketEvents.json');
+const media = require('./media.service');
 
 const { ObjectId } = mongoose.Types;
 const PAGE_SIZE = 30;
 const LIST_PAGE_SIZE = 30;
 const EPHEMERAL_MS = 24 * 60 * 60 * 1000; // 23.16
+const MAX_AUDIO_SEC = 120; // 36.3
+const OPENED_MEDIA_TTL_MS = 10 * 60 * 1000; // 36.7 time to finish playing an opened voice note
+
+// 36.9 what lists / pushes show instead of the content
+const PREVIEW = { audio: '🎤 Voice message', viewOnce: '🔒 View once message' };
+const previewOf = ({ type, viewOnce, text }) => {
+  if (viewOnce) return PREVIEW.viewOnce;
+  if (type === 'audio') return PREVIEW.audio;
+  return text;
+};
 
 const settings = { ephemeralMs: EPHEMERAL_MS };
 
 const notFound = () => ApiError.notFound('Chat not found', 'CHAT_NOT_FOUND');
 const oid = (id) => new ObjectId(String(id));
 
-const toMessage = (m) => ({
-  id: String(m._id),
-  conversationId: String(m.conversationId),
-  senderId: m.senderId ? String(m.senderId) : null,
-  text: m.text,
-  type: m.type,
-  status: m.status,
-  clientMsgId: m.clientMsgId || null,
-  createdAt: m.createdAt,
-  deliveredAt: m.deliveredAt || null,
-  seenAt: m.seenAt || null,
-});
+// viewerId: who gets this copy. A view-once message shows no content to the receiver until they
+// open it (chat:open-once), and to nobody after that.
+const toMessage = (m, viewerId) => {
+  const mine = viewerId && m.senderId && String(m.senderId) === String(viewerId);
+  const hidden = Boolean(m.viewOnce) && (Boolean(m.openedAt) || (viewerId && !mine));
+  const hasAudio = m.type === 'audio' && m.audio;
+  return {
+    id: String(m._id),
+    conversationId: String(m.conversationId),
+    senderId: m.senderId ? String(m.senderId) : null,
+    text: hidden ? '' : m.text || '',
+    type: m.type,
+    audio: hasAudio
+      ? {
+          url: hidden ? null : m.audio.url || null,
+          durationSec: m.audio.durationSec || 0,
+        }
+      : null,
+    viewOnce: Boolean(m.viewOnce),
+    openedAt: m.openedAt || null,
+    status: m.status,
+    clientMsgId: m.clientMsgId || null,
+    createdAt: m.createdAt,
+    deliveredAt: m.deliveredAt || null,
+    seenAt: m.seenAt || null,
+  };
+};
 
 const senderInfo = (u) => {
   const p = toPublicUser(u);
@@ -113,13 +139,16 @@ const cleanText = (text, { isRandomSession }) => {
 };
 
 // 23.2 - 23.6, 23.10, 23.14, 23.15
-const sendMessage = async (senderId, { conversationId, toUserId, text, clientMsgId }) => {
+const sendMessage = async (
+  senderId,
+  { conversationId, toUserId, text, clientMsgId, audio, viewOnce = false },
+) => {
   const uid = String(senderId);
 
   // 23.15 a resend after reconnect returns the stored message instead of a copy
   if (clientMsgId) {
     const existing = await Message.findOne({ senderId: uid, clientMsgId }).lean();
-    if (existing) return { message: toMessage(existing), duplicate: true };
+    if (existing) return { message: toMessage(existing, uid), duplicate: true };
   }
 
   let conv;
@@ -155,10 +184,24 @@ const sendMessage = async (senderId, { conversationId, toUserId, text, clientMsg
   if (conv.isRandomSession && conv.endedAt) {
     throw ApiError.forbidden('This chat has ended', 'CHAT_ENDED');
   }
-  const body = cleanText(text, conv);
+  // 36.2 a voice message (file already on Cloudinary, in this user's folder) or text
+  let voice = null;
+  if (audio) {
+    const durationSec = Math.round(Number(audio.durationSec));
+    if (!(durationSec >= 1 && durationSec <= MAX_AUDIO_SEC)) {
+      throw ApiError.badRequest(
+        `Voice messages can be up to ${MAX_AUDIO_SEC} seconds`,
+        'AUDIO_TOO_LONG',
+      );
+    }
+    const ok = media.verifyUpload(uid, 'chat_audio', audio);
+    voice = { url: ok.url, publicId: ok.publicId, durationSec };
+  }
+  const body = voice ? '' : cleanText(text, conv);
   // random sessions (Phase 25): safety filter; required lazily (session.service uses this module)
   const sessions = conv.isRandomSession ? require('./session.service') : null;
-  if (sessions) sessions.checkSafety(conv, body);
+  if (sessions && body) sessions.checkSafety(conv, body);
+  const kind = { type: voice ? 'audio' : 'text', viewOnce: Boolean(viewOnce), text: body };
 
   let msg;
   try {
@@ -166,6 +209,9 @@ const sendMessage = async (senderId, { conversationId, toUserId, text, clientMsg
       conversationId: conv._id,
       senderId: uid,
       text: body,
+      type: kind.type,
+      audio: voice || undefined,
+      viewOnce: kind.viewOnce,
       status: 'sent',
       clientMsgId: clientMsgId || undefined,
     });
@@ -173,7 +219,7 @@ const sendMessage = async (senderId, { conversationId, toUserId, text, clientMsg
     if (err.code === 11000 && clientMsgId) {
       // same clientMsgId sent twice at the same moment - the first one won
       const existing = await Message.findOne({ senderId: uid, clientMsgId }).lean();
-      return { message: toMessage(existing), duplicate: true };
+      return { message: toMessage(existing, uid), duplicate: true };
     }
     throw err;
   }
@@ -182,7 +228,9 @@ const sendMessage = async (senderId, { conversationId, toUserId, text, clientMsg
   await Conversation.updateOne(
     { _id: conv._id },
     {
-      $set: { lastMessage: { text: body, senderId: oid(uid), createdAt: msg.createdAt } },
+      $set: {
+        lastMessage: { text: previewOf(kind), senderId: oid(uid), createdAt: msg.createdAt },
+      },
       $inc: { [`unreadCount.${receiverId}`]: 1 },
       $pull: { deletedFor: { $in: [oid(uid), oid(receiverId)] } },
     },
@@ -192,15 +240,15 @@ const sendMessage = async (senderId, { conversationId, toUserId, text, clientMsg
   require('./gamification.service')
     .bump(uid, 'messages', 1) // 32.8 goal progress
     .catch(() => {});
-  const message = toMessage(msg);
+  const message = toMessage(msg, uid);
   const sender = await User.findById(uid).lean();
-  const payload = {
-    message,
+  const base = {
     conversation: { id: String(conv._id), isRandomSession: Boolean(conv.isRandomSession) },
     sender: sender ? senderInfo(sender) : { id: uid },
   };
-  emitter.emitToUser(receiverId, EVENTS.CHAT_NEW, payload);
-  emitter.emitToUser(uid, EVENTS.CHAT_NEW, payload); // my other devices (the app dedupes by id)
+  // the receiver's copy never carries view-once content (36.7)
+  emitter.emitToUser(receiverId, EVENTS.CHAT_NEW, { ...base, message: toMessage(msg, receiverId) });
+  emitter.emitToUser(uid, EVENTS.CHAT_NEW, { ...base, message }); // my other devices (deduped by id)
 
   // 23.14 offline receiver: push with name + preview
   if ((await registry.socketCount(receiverId)) === 0) {
@@ -213,7 +261,10 @@ const sendMessage = async (senderId, { conversationId, toUserId, text, clientMsg
           messageId: message.id,
           senderId: uid,
           senderName: (sender && sender.name) || 'Someone',
-          preview: body.length > 80 ? `${body.slice(0, 79)}…` : body,
+          preview:
+            kind.type === 'text' && !kind.viewOnce && body.length > 80
+              ? `${body.slice(0, 79)}…`
+              : previewOf(kind),
         },
         { ttlSec: 24 * 3600 },
       )
@@ -426,7 +477,7 @@ const listMessages = async (userId, conversationId, { before, limit = PAGE_SIZE 
       blockedByMe: Boolean(blockedByMe),
       canReply: active && !blockedByMe && !blockedMe && !conv.endedAt,
     },
-    items: page.map(toMessage),
+    items: page.map((m) => toMessage(m, uid)),
     nextBefore: hasMore ? String(page[page.length - 1]._id) : null,
   };
 };
@@ -483,6 +534,78 @@ const scheduleEphemeralDelete = async (conversationId, endedAt = new Date()) => 
   return expiresAt;
 };
 
+// 36.7 the receiver opens a view-once message: they get the content once, then it is wiped.
+// Atomic - two devices opening at the same moment can't both get it.
+const openViewOnce = async (userId, { conversationId, messageId }) => {
+  const uid = String(userId);
+  const conv = await loadConversation(conversationId, uid);
+  if (!mongoose.isValidObjectId(messageId)) {
+    throw ApiError.notFound('Message not found', 'MESSAGE_NOT_FOUND');
+  }
+  const now = new Date();
+  const before = await Message.findOneAndUpdate(
+    {
+      _id: messageId,
+      conversationId: conv._id,
+      viewOnce: true,
+      senderId: { $ne: oid(uid) },
+      openedAt: { $exists: false },
+      deletedFor: { $ne: oid(uid) },
+    },
+    {
+      $set: {
+        openedAt: now,
+        text: '',
+        mediaPurgeAt: new Date(now.getTime() + OPENED_MEDIA_TTL_MS),
+      },
+    },
+    { returnDocument: 'before' },
+  ).lean();
+  if (!before) {
+    const exists = await Message.exists({
+      _id: messageId,
+      conversationId: conv._id,
+      viewOnce: true,
+    });
+    if (exists) throw ApiError.conflict('This message was already opened', 'ALREADY_OPENED');
+    throw ApiError.notFound('Message not found', 'MESSAGE_NOT_FOUND');
+  }
+  const opened = { conversationId: String(conv._id), messageId: String(before._id), openedAt: now };
+  emitter.emitToUsers([uid, String(before.senderId)], EVENTS.CHAT_OPENED, opened);
+  return {
+    ...opened,
+    text: before.text || '',
+    audio:
+      before.type === 'audio' && before.audio
+        ? { url: before.audio.url, durationSec: before.audio.durationSec || 0 }
+        : null,
+  };
+};
+
+// 36.7 / 23.16 voice files of opened view-once messages and of random-chat messages about to
+// expire are deleted from Cloudinary. Runs every few minutes (jobs/index.js).
+const purgeMedia = async (now = new Date()) => {
+  const soon = new Date(now.getTime() + OPENED_MEDIA_TTL_MS);
+  const rows = await Message.find({
+    'audio.publicId': { $exists: true, $ne: null },
+    $or: [{ mediaPurgeAt: { $lte: now } }, { expiresAt: { $lte: soon } }],
+  })
+    .select('_id audio')
+    .limit(200)
+    .lean();
+  let purged = 0;
+  for (const m of rows) {
+    if (await media.destroy(m.audio.publicId, 'video')) {
+      await Message.updateOne(
+        { _id: m._id },
+        { $unset: { 'audio.url': 1, 'audio.publicId': 1, mediaPurgeAt: 1 } },
+      );
+      purged += 1;
+    }
+  }
+  return purged ? { purged } : null;
+};
+
 const __clearCacheForTests = () => participantCache.clear();
 
 module.exports = {
@@ -501,5 +624,8 @@ module.exports = {
   deleteMessageForMe,
   scheduleEphemeralDelete,
   unreadTotal,
+  openViewOnce,
+  purgeMedia,
+  PREVIEW,
   __clearCacheForTests,
 };

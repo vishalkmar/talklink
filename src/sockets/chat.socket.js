@@ -12,16 +12,26 @@ const schemas = {
   send: Joi.object({
     conversationId: objectId,
     toUserId: objectId,
-    text: Joi.string().max(4000).required(), // trimmed + limited to 1000 by the service
+    text: Joi.string().max(4000), // trimmed + limited to 1000 by the service
+    // 36.2 voice message: what Cloudinary returned for the signed upload
+    audio: Joi.object({
+      publicId: Joi.string().max(300).required(),
+      url: Joi.string().uri().max(600).required(),
+      durationSec: Joi.number().min(0).max(600).required(),
+    }),
+    viewOnce: Joi.boolean(), // 36.6
     clientMsgId: Joi.string()
       .max(64)
       .pattern(/^[A-Za-z0-9_-]+$/),
-  }).xor('conversationId', 'toUserId'),
+  })
+    .xor('conversationId', 'toUserId')
+    .xor('text', 'audio'),
   delivered: Joi.object({
     conversationId: objectId.required(),
     messageIds: Joi.array().items(objectId).min(1).max(200).required(),
   }),
   conversation: Joi.object({ conversationId: objectId.required() }),
+  openOnce: Joi.object({ conversationId: objectId.required(), messageId: objectId.required() }),
 };
 
 const validate = (schema, payload) => {
@@ -37,6 +47,12 @@ module.exports = (io, socket) => {
   socket.on(
     EVENTS.CHAT_SEND,
     withAck(async (payload) => chat.sendMessage(uid, validate(schemas.send, payload))),
+  );
+
+  // 36.7 open a view-once message (ack -> { text, audio, openedAt }); works only once
+  socket.on(
+    EVENTS.CHAT_OPEN_ONCE,
+    withAck(async (payload) => chat.openViewOnce(uid, validate(schemas.openOnce, payload))),
   );
 
   // 23.7 my app received these messages
