@@ -1,4 +1,5 @@
 module.exports = {
+  Status: require('./Status'),
   User: require('./User'),
   Otp: require('./Otp'),
   Session: require('./Session'),

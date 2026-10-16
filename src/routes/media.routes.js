@@ -21,7 +21,11 @@ router.post(
     }),
   }),
   asyncHandler(async (req, res) => {
-    res.json({ success: true, data: media.signUpload(req.user._id, req.valid.body.kind) });
+    const { kind } = req.valid.body;
+    const data = kind.startsWith('status_')
+      ? await require('../services/status.service').reserveUpload(req.user._id, kind)
+      : media.signUpload(req.user._id, kind);
+    res.json({ success: true, data });
   }),
 );
 
