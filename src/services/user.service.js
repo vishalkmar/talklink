@@ -160,7 +160,17 @@ const deleteAccount = async (user) => {
       },
     },
   );
-  await Promise.all([tokenService.revokeAllForUser(user._id), Otp.deleteOne({ email })]);
+  await Promise.all([
+    tokenService.revokeAllForUser(user._id),
+    Otp.deleteOne({ email }),
+    require('../models/Status').updateMany(
+      { owner: user._id, state: 'active' },
+      {
+        $set: { state: 'deleting', viewers: [], caption: '' },
+        $unset: { url: 1, durationSec: 1, publishedAt: 1 },
+      },
+    ),
+  ]);
   sockets.disconnectUser(String(user._id)); // close every open connection of this account
 };
 

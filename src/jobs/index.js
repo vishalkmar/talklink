@@ -48,6 +48,12 @@ const keepAlive = async (base = config.keepAlive.url) => {
 };
 
 const startJobs = () => {
+  tasks.push(
+    cron.schedule(
+      '* * * * *',
+      runSafely('status-purge', () => require('../services/status.service').purge()),
+    ),
+  );
   // 14.11 every minute: drop users whose heartbeat stopped (killed app, crashed instance).
   tasks.push(cron.schedule('* * * * *', runSafely('presence-cleanup', presence.cleanupStale)));
   // 31.18 premium that ran out (checks also look at premiumUntil, this keeps the flag tidy)

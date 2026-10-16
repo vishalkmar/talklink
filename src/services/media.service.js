@@ -108,6 +108,23 @@ const __setTransportForTests = (fn) => {
   transport = fn;
 };
 
+// Fetch trusted size/type/duration from Cloudinary, never from the mobile client's metadata.
+const inspectResource = async (publicId, resourceType) => {
+  assertConfigured();
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${settings.cloudName}/resources/${resourceType}/upload/${encodeURIComponent(publicId)}`,
+    {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${settings.apiKey}:${settings.apiSecret}`).toString('base64')}`,
+      },
+      signal: AbortSignal.timeout(15000),
+    },
+  );
+  if (!response.ok)
+    throw new ApiError(502, 'MEDIA_VERIFY_FAILED', 'Could not verify the upload. Please retry.');
+  return response.json();
+};
+
 module.exports = {
   settings,
   KINDS,
@@ -115,6 +132,7 @@ module.exports = {
   sign,
   signUpload,
   verifyUpload,
+  inspectResource,
   destroy,
   __setTransportForTests,
 };

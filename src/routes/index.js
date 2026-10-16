@@ -38,6 +38,7 @@ router.use('/referrals', referralRoutes);
 router.use('/feedback', feedbackRoutes);
 router.use('/content', contentRoutes);
 router.use('/media', mediaRoutes);
+router.use('/statuses', require('./status.routes'));
 router.use('/stats', statsRoutes);
 router.use('/admin', adminRoutes);
 
